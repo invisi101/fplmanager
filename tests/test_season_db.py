@@ -89,6 +89,26 @@ class TestOutcome:
         assert outcomes[0]["point_delta"] == -7.0
 
 
+class TestClearGeneratedData:
+    def test_clears_recommendations_and_plans(self, season_db):
+        sid = season_db.create_season(123, season_name="2024-2025")
+        season_db.save_recommendation(sid, 10, captain_name="Salah")
+        season_db.save_outcome(sid, 10, actual_points=55)
+        season_db.save_strategic_plan(sid, 10, '{"v":1}', '{}')
+        season_db.save_plan_change(sid, 10, "test", "test change")
+        # Also save a snapshot (should NOT be cleared)
+        season_db.save_gw_snapshot(sid, 10, points=55)
+
+        season_db.clear_generated_data(sid)
+
+        assert season_db.get_recommendations(sid) == []
+        assert season_db.get_outcomes(sid) == []
+        assert season_db.get_strategic_plan(sid) is None
+        assert season_db.get_plan_changelog(sid) == []
+        # Snapshot preserved
+        assert season_db.get_snapshot(sid, 10) is not None
+
+
 class TestFixtureCalendar:
     def test_save_and_get_fixtures(self, season_db):
         sid = season_db.create_season(123, season_name="2024-2025")

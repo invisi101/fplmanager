@@ -168,6 +168,10 @@ class SeasonManager:
         )
         self.db.update_season_gw(season_id, current_event)
 
+        # Clear stale recommendations, strategic plans, and outcomes so
+        # the UI doesn't show outdated action plans after re-import.
+        self.db.clear_generated_data(season_id)
+
         log(f"Season created (ID: {season_id}). Backfilling {len(gw_entries)} gameweeks...")
 
         # Build chip map: event -> chip_name

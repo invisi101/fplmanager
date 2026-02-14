@@ -196,6 +196,20 @@ class SeasonDB:
         conn.commit()
         conn.close()
 
+    def clear_generated_data(self, season_id: int):
+        """Clear recommendations, outcomes, strategic plans, and changelog.
+
+        Called on season re-init so stale generated data doesn't persist.
+        Preserves snapshots (actual historical data), prices, and fixtures.
+        """
+        conn = self._conn()
+        conn.execute("DELETE FROM recommendation WHERE season_id=?", (season_id,))
+        conn.execute("DELETE FROM recommendation_outcome WHERE season_id=?", (season_id,))
+        conn.execute("DELETE FROM strategic_plan WHERE season_id=?", (season_id,))
+        conn.execute("DELETE FROM plan_changelog WHERE season_id=?", (season_id,))
+        conn.commit()
+        conn.close()
+
     def update_season_gw(self, season_id: int, current_gw: int):
         conn = self._conn()
         conn.execute(
