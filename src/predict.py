@@ -230,6 +230,96 @@ def _predict_next_3gw_from_1gw(
     return merged[["player_id", "predicted_next_3gw_points"]]
 
 
+def predict_future_gw(
+    current: pd.DataFrame,
+    df: pd.DataFrame,
+    fixture_context: dict,
+    latest_gw: int,
+    target_gw: int,
+) -> pd.DataFrame:
+    """Predict points for a single future GW using the 1-GW model.
+
+    Returns DataFrame with player_id, predicted_points, confidence columns.
+    Applies confidence decay of 0.95^offset to account for increasing uncertainty.
+    """
+    offset = target_gw - latest_gw
+    if offset < 1:
+        return pd.DataFrame(columns=["player_id", "predicted_points", "confidence"])
+
+    fixture_map = fixture_context["fixture_map"]
+    fdr_map = fixture_context["fdr_map"]
+    elo = fixture_context["elo"]
+    opp_rolling = fixture_context["opp_rolling"]
+
+    snapshot = _build_offset_snapshot(
+        current, df, target_gw, fixture_map, fdr_map, elo, opp_rolling,
+    )
+    if snapshot.empty:
+        return pd.DataFrame(columns=["player_id", "predicted_points", "confidence"])
+
+    gw_preds = []
+    for position in POSITION_GROUPS:
+        components = SUB_MODELS_FOR_POSITION.get(position, [])
+        has_sub = all(
+            load_sub_model(position, comp) is not None for comp in components
+        ) if components else False
+
+        if has_sub:
+            preds = predict_decomposed(snapshot, position)
+        else:
+            model_dict = load_model(position, "next_gw_points")
+            if model_dict is None:
+                continue
+            preds = predict_for_position(
+                snapshot, position, "next_gw_points", model_dict,
+            )
+        if not preds.empty:
+            gw_preds.append(preds[["player_id", "predicted_next_gw_points"]].copy())
+
+    if not gw_preds:
+        return pd.DataFrame(columns=["player_id", "predicted_points", "confidence"])
+
+    result = pd.concat(gw_preds, ignore_index=True)
+
+    # Apply confidence decay
+    confidence = 0.95 ** offset
+    result["predicted_points"] = result["predicted_next_gw_points"] * confidence
+    result["confidence"] = confidence
+    result = result.drop(columns=["predicted_next_gw_points"])
+
+    return result
+
+
+def predict_future_range(
+    current: pd.DataFrame,
+    df: pd.DataFrame,
+    fixture_context: dict,
+    latest_gw: int,
+    horizon: int = 8,
+) -> dict[int, pd.DataFrame]:
+    """Predict points for GW+1 through GW+horizon.
+
+    Returns {gw: DataFrame} where each DataFrame has
+    player_id, predicted_points, confidence columns.
+    """
+    predictions = {}
+    for offset in range(1, horizon + 1):
+        target_gw = latest_gw + offset
+        if target_gw > 38:
+            break
+        gw_df = predict_future_gw(
+            current, df, fixture_context, latest_gw, target_gw,
+        )
+        if not gw_df.empty:
+            predictions[target_gw] = gw_df
+            n = len(gw_df)
+            avg = gw_df["predicted_points"].mean()
+            conf = gw_df["confidence"].iloc[0]
+            print(f"  GW{target_gw}: {n} players, avg {avg:.2f} pts (conf {conf:.2f})")
+
+    return predictions
+
+
 def run_predictions(df: pd.DataFrame, data: dict | None = None) -> pd.DataFrame:
     """Generate predictions for all players for the upcoming gameweek(s)."""
     latest_gw = get_latest_gw(df)

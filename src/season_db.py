@@ -115,6 +115,28 @@ class SeasonDB:
                 is_bgw INTEGER DEFAULT 0,
                 UNIQUE(season_id, team_id, gameweek)
             );
+
+            CREATE TABLE IF NOT EXISTS strategic_plan (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+                as_of_gw INTEGER NOT NULL,
+                plan_json TEXT,
+                chip_heatmap_json TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(season_id, as_of_gw)
+            );
+
+            CREATE TABLE IF NOT EXISTS plan_changelog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                season_id INTEGER NOT NULL REFERENCES season(id) ON DELETE CASCADE,
+                gameweek INTEGER NOT NULL,
+                change_type TEXT NOT NULL,
+                description TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                reason TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
         """)
         conn.commit()
         conn.close()
@@ -479,6 +501,64 @@ class SeasonDB:
                WHERE gs.season_id=?
                ORDER BY gs.gameweek""",
             (season_id,),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    # -----------------------------------------------------------------------
+    # Strategic Plan
+    # -----------------------------------------------------------------------
+
+    def save_strategic_plan(self, season_id: int, as_of_gw: int,
+                            plan_json: str, chip_heatmap_json: str):
+        conn = self._conn()
+        conn.execute(
+            """INSERT OR REPLACE INTO strategic_plan
+               (season_id, as_of_gw, plan_json, chip_heatmap_json)
+               VALUES (?, ?, ?, ?)""",
+            (season_id, as_of_gw, plan_json, chip_heatmap_json),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_strategic_plan(self, season_id: int, as_of_gw: int | None = None) -> dict | None:
+        conn = self._conn()
+        if as_of_gw is not None:
+            row = conn.execute(
+                "SELECT * FROM strategic_plan WHERE season_id=? AND as_of_gw=?",
+                (season_id, as_of_gw),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM strategic_plan WHERE season_id=? ORDER BY as_of_gw DESC LIMIT 1",
+                (season_id,),
+            ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    # -----------------------------------------------------------------------
+    # Plan Changelog
+    # -----------------------------------------------------------------------
+
+    def save_plan_change(self, season_id: int, gameweek: int, change_type: str,
+                         description: str, old_value: str = "",
+                         new_value: str = "", reason: str = ""):
+        conn = self._conn()
+        conn.execute(
+            """INSERT INTO plan_changelog
+               (season_id, gameweek, change_type, description, old_value, new_value, reason)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (season_id, gameweek, change_type, description, old_value, new_value, reason),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_plan_changelog(self, season_id: int, limit: int = 50) -> list[dict]:
+        conn = self._conn()
+        rows = conn.execute(
+            """SELECT * FROM plan_changelog WHERE season_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (season_id, limit),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]

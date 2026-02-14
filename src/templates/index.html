@@ -1269,6 +1269,7 @@
       <button class="season-sub-tab" data-section="transfers" onclick="switchSeasonSection(this)">Transfer History</button>
       <button class="season-sub-tab" data-section="chips" onclick="switchSeasonSection(this)">Chips</button>
       <button class="season-sub-tab" data-section="prices" onclick="switchSeasonSection(this)">Prices</button>
+      <button class="season-sub-tab" data-section="strategy" onclick="switchSeasonSection(this)">Strategy</button>
     </div>
 
     <!-- Overview Section -->
@@ -1322,6 +1323,40 @@
       <div id="priceAlertsContainer"></div>
       <h4 style="margin:16px 0 8px;font-size:14px">Squad Prices</h4>
       <div id="priceTableContainer"></div>
+    </div>
+
+    <!-- Strategy Section -->
+    <div class="season-section" id="seasonStrategy">
+      <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <button class="btn btn-primary" onclick="generateStrategicPlan()">Generate Plan</button>
+        <span id="strategyPlanStatus" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+
+      <!-- Plan Rationale -->
+      <div id="strategyRationale" style="display:none;background:var(--surface2);border-radius:8px;padding:12px 16px;margin-bottom:16px;border-left:3px solid var(--accent)">
+        <div style="font-size:11px;text-transform:uppercase;color:var(--text2);margin-bottom:4px">Strategic Rationale</div>
+        <div id="strategyRationaleText" style="font-size:13px;line-height:1.6"></div>
+      </div>
+
+      <!-- Transfer Timeline -->
+      <h4 style="margin-bottom:8px;font-size:14px">Transfer Timeline</h4>
+      <div id="strategyTimeline" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;margin-bottom:20px"></div>
+
+      <!-- Captain Plan -->
+      <h4 style="margin-bottom:8px;font-size:14px">Captain Plan</h4>
+      <div id="strategyCaptainPlan" style="margin-bottom:20px"></div>
+
+      <!-- Chip Schedule -->
+      <h4 style="margin-bottom:8px;font-size:14px">Chip Schedule</h4>
+      <div id="strategyChipSchedule" style="margin-bottom:20px"></div>
+
+      <!-- Chip Heatmap -->
+      <h4 style="margin-bottom:8px;font-size:14px">Chip Heatmap</h4>
+      <div id="strategyChipHeatmap" style="overflow-x:auto;margin-bottom:20px"></div>
+
+      <!-- Plan Changelog -->
+      <h4 style="margin-bottom:8px;font-size:14px">Plan Changelog</h4>
+      <div id="strategyChangelog"></div>
     </div>
   </div>
 </div>
@@ -2581,6 +2616,7 @@ function switchSeasonSection(btn) {
     transfers: 'seasonTransfers',
     chips: 'seasonChips',
     prices: 'seasonPrices',
+    strategy: 'seasonStrategy',
   };
   const el = document.getElementById(sectionMap[section]);
   if (el) el.classList.add('visible');
@@ -2590,6 +2626,7 @@ function switchSeasonSection(btn) {
   if (section === 'transfers') loadTransferHistory();
   if (section === 'chips') loadChips();
   if (section === 'prices') loadPrices();
+  if (section === 'strategy') loadStrategicPlan();
 }
 
 function loadSeasonDashboard() {
@@ -3278,6 +3315,271 @@ function seasonOnTaskDone() {
     loadLatestRecommendation();
   }
 }
+
+// ---------------------------------------------------------------------------
+// Strategic Planning
+// ---------------------------------------------------------------------------
+function getSeasonMid() {
+  return getSeasonManagerId();
+}
+
+function generateStrategicPlan() {
+  const mid = getSeasonMid();
+  if (!mid) return;
+  document.getElementById('strategyPlanStatus').textContent = 'Generating...';
+  fetch('/api/season/strategic-plan', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({manager_id: mid}),
+  }).then(r => r.json()).then(d => {
+    if (d.error) {
+      document.getElementById('strategyPlanStatus').textContent = d.error;
+    } else {
+      document.getElementById('strategyPlanStatus').textContent = 'Running in background...';
+    }
+  });
+}
+
+function loadStrategicPlan() {
+  const mid = getSeasonMid();
+  if (!mid) return;
+  fetch(`/api/season/strategic-plan?manager_id=${mid}`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        document.getElementById('strategyPlanStatus').textContent = d.error;
+        return;
+      }
+      renderStrategicPlan(d);
+    });
+}
+
+function renderStrategicPlan(data) {
+  const plan = data.plan || {};
+  const heatmap = data.chip_heatmap || {};
+  const changelog = data.changelog || [];
+
+  document.getElementById('strategyPlanStatus').textContent =
+    `Plan as of GW${data.as_of_gw || '?'} (${data.created_at || ''})`;
+
+  // Rationale
+  const ratEl = document.getElementById('strategyRationale');
+  if (plan.rationale) {
+    ratEl.style.display = 'block';
+    document.getElementById('strategyRationaleText').textContent = plan.rationale;
+  } else {
+    ratEl.style.display = 'none';
+  }
+
+  // Timeline
+  renderTimeline(plan.timeline || []);
+
+  // Captain plan
+  renderCaptainPlan(plan.timeline || []);
+
+  // Chip schedule
+  renderChipSchedule(plan.chip_schedule || {}, plan.chip_synergies || []);
+
+  // Chip heatmap
+  renderChipHeatmap(heatmap);
+
+  // Changelog
+  renderChangelog(changelog);
+}
+
+function renderTimeline(timeline) {
+  const container = document.getElementById('strategyTimeline');
+  if (!timeline.length) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:13px">No plan generated yet.</p>';
+    return;
+  }
+  let html = '';
+  timeline.forEach((entry, i) => {
+    const conf = entry.confidence || 0.9;
+    const confColor = conf > 0.8 ? 'var(--green)' : conf > 0.6 ? 'var(--yellow)' : 'var(--red)';
+    const borderColor = i === 0 ? 'var(--accent)' : 'var(--border)';
+    const chipBadge = entry.chip
+      ? `<div style="background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;display:inline-block;margin-top:6px">${chipLabel(entry.chip)} (+${(entry.chip_value||0).toFixed(1)})</div>`
+      : '';
+
+    html += `<div style="min-width:200px;background:var(--surface2);border-radius:8px;padding:12px 14px;border-top:3px solid ${borderColor};flex-shrink:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong style="font-size:15px">GW${entry.gw}</strong>
+        <span style="font-size:11px;color:${confColor}">${(conf*100).toFixed(0)}%</span>
+      </div>`;
+
+    // FT strategy
+    const ftUsed = entry.ft_used || 0;
+    const ftAvail = entry.ft_available || 0;
+    if (ftUsed === 0) {
+      html += `<div style="font-size:12px;color:var(--yellow);margin-bottom:4px">Bank FT (${ftAvail}→${Math.min(ftAvail+1,5)})</div>`;
+    } else {
+      html += `<div style="font-size:12px;color:var(--green);margin-bottom:4px">Use ${ftUsed} FT</div>`;
+    }
+
+    // Transfers
+    const tIn = entry.transfers_in || [];
+    if (tIn.length > 0) {
+      tIn.forEach(t => {
+        html += `<div style="font-size:12px;margin-left:4px">+ ${t.web_name || '?'} <span style="color:var(--text2)">${t.position || ''} ${t.cost ? t.cost.toFixed(1)+'m' : ''}</span></div>`;
+      });
+    }
+    const tOut = entry.transfers_out || [];
+    tOut.forEach(t => {
+      html += `<div style="font-size:12px;margin-left:4px;color:var(--red)">- ${t.web_name || 'player'}</div>`;
+    });
+
+    // Captain
+    if (entry.captain_name) {
+      const weakBadge = entry.weak_captain ? ' <span style="color:var(--red);font-size:10px">WEAK</span>' : '';
+      html += `<div style="font-size:12px;margin-top:6px">C: <strong>${entry.captain_name}</strong> (${(entry.captain_points||0).toFixed(1)})${weakBadge}</div>`;
+    }
+
+    // Predicted points
+    if (entry.predicted_points) {
+      html += `<div style="font-size:12px;color:var(--text2);margin-top:4px">XI: ${entry.predicted_points.toFixed(1)} pts</div>`;
+    }
+
+    html += chipBadge;
+    html += '</div>';
+  });
+  container.innerHTML = html;
+}
+
+function renderCaptainPlan(timeline) {
+  const container = document.getElementById('strategyCaptainPlan');
+  const caps = timeline.filter(e => e.captain_name);
+  if (!caps.length) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:13px">No captain plan available.</p>';
+    return;
+  }
+  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+  caps.forEach(c => {
+    const weakStyle = c.weak_captain ? 'border-color:var(--red)' : 'border-color:var(--green)';
+    html += `<div style="background:var(--surface2);padding:8px 12px;border-radius:6px;border-left:3px solid;${weakStyle};font-size:13px">
+      <div style="color:var(--text2);font-size:11px">GW${c.gw}</div>
+      <strong>${c.captain_name}</strong>
+      <div style="font-size:12px;color:var(--text2)">${(c.captain_points||0).toFixed(1)} pts</div>
+    </div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function chipLabel(name) {
+  const labels = {wildcard:'Wildcard', freehit:'Free Hit', bboost:'Bench Boost', '3xc':'Triple Captain'};
+  return labels[name] || name;
+}
+
+function renderChipSchedule(schedule, synergies) {
+  const container = document.getElementById('strategyChipSchedule');
+  const entries = Object.entries(schedule);
+  if (!entries.length) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:13px">No chips scheduled.</p>';
+    return;
+  }
+
+  let html = '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">';
+  entries.forEach(([chip, gw]) => {
+    html += `<div style="background:var(--accent);color:#fff;padding:10px 16px;border-radius:8px;text-align:center">
+      <div style="font-size:14px;font-weight:600">${chipLabel(chip)}</div>
+      <div style="font-size:20px;font-weight:800">GW${gw}</div>
+    </div>`;
+  });
+  html += '</div>';
+
+  // Synergies
+  if (synergies && synergies.length) {
+    html += '<div style="font-size:12px;color:var(--text2);margin-top:4px">';
+    synergies.forEach(s => {
+      html += `<div style="margin-bottom:4px">&#x1F517; ${s.description} <strong>+${(s.synergy_bonus||0).toFixed(1)} pts</strong></div>`;
+    });
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function renderChipHeatmap(heatmap) {
+  const container = document.getElementById('strategyChipHeatmap');
+  const chips = Object.keys(heatmap);
+  if (!chips.length) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:13px">No chip heatmap data.</p>';
+    return;
+  }
+
+  // Collect all GWs
+  const allGws = new Set();
+  chips.forEach(chip => {
+    Object.keys(heatmap[chip]).forEach(gw => allGws.add(parseInt(gw)));
+  });
+  const gws = Array.from(allGws).sort((a,b) => a-b);
+
+  // Find global max for color scaling
+  let globalMax = 0;
+  chips.forEach(chip => {
+    Object.values(heatmap[chip]).forEach(v => { if (v > globalMax) globalMax = v; });
+  });
+
+  let html = '<table class="bt-table" style="font-size:12px"><thead><tr><th>Chip</th>';
+  gws.forEach(gw => { html += `<th style="text-align:center;min-width:40px">GW${gw}</th>`; });
+  html += '<th style="text-align:center">Best</th></tr></thead><tbody>';
+
+  chips.forEach(chip => {
+    const vals = heatmap[chip];
+    let bestGw = null, bestVal = -1;
+    Object.entries(vals).forEach(([gw, v]) => {
+      if (v > bestVal) { bestVal = v; bestGw = gw; }
+    });
+
+    html += `<tr><td style="font-weight:600">${chipLabel(chip)}</td>`;
+    gws.forEach(gw => {
+      const v = vals[gw] || vals[String(gw)] || 0;
+      const intensity = globalMax > 0 ? v / globalMax : 0;
+      const bg = intensity > 0.7 ? 'rgba(45,212,160,0.3)'
+        : intensity > 0.4 ? 'rgba(251,191,36,0.2)'
+        : intensity > 0.1 ? 'rgba(255,255,255,0.05)' : 'transparent';
+      const isBest = String(gw) === String(bestGw);
+      const border = isBest ? 'border:2px solid var(--accent);font-weight:700' : '';
+      html += `<td style="text-align:center;background:${bg};${border}">${v.toFixed(1)}</td>`;
+    });
+    html += `<td style="text-align:center;color:var(--accent);font-weight:700">GW${bestGw} (${bestVal.toFixed(1)})</td>`;
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+function renderChangelog(changelog) {
+  const container = document.getElementById('strategyChangelog');
+  if (!changelog.length) {
+    container.innerHTML = '<p style="color:var(--text2);font-size:13px">No plan changes recorded.</p>';
+    return;
+  }
+  let html = '<div style="max-height:300px;overflow-y:auto">';
+  changelog.forEach(c => {
+    const typeColor = c.change_type === 'chip_schedule' ? 'var(--accent)' : 'var(--yellow)';
+    html += `<div style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">
+      <span style="color:${typeColor};font-weight:600;min-width:80px">${c.change_type}</span>
+      <div>
+        <div>${c.description}</div>
+        <div style="color:var(--text2)">${c.old_value || ''} &rarr; ${c.new_value || ''}</div>
+        <div style="color:var(--text2);font-size:11px">${c.created_at || ''}</div>
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+// Reload strategy after task completes
+const _origSeasonOnTaskDone = seasonOnTaskDone;
+seasonOnTaskDone = function() {
+  _origSeasonOnTaskDone();
+  const strategySection = document.getElementById('seasonStrategy');
+  if (strategySection && strategySection.classList.contains('visible')) {
+    loadStrategicPlan();
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Init

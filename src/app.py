@@ -43,7 +43,7 @@ from src.backtest import predict_single_gw, run_backtest
 from src.predict import OUTPUT_DIR, format_predictions, run_predictions
 from src.solver import scrub_nan as _scrub_nan, solve_milp_team as _solve_milp_team, solve_transfer_milp as _solve_transfer_milp
 from src.season_db import SeasonDB
-from src.season_manager import SeasonManager
+from src.season_manager import SeasonManager, scrub_nan_recursive
 
 app = Flask(__name__)
 
@@ -315,6 +315,34 @@ def api_refresh_data():
                 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
                 result.to_csv(OUTPUT_DIR / "predictions.csv", index=False, encoding="utf-8")
                 print("Predictions updated.")
+
+        # Auto-replan: check if existing strategic plan needs updating
+        try:
+            from src.strategy import detect_plan_invalidation
+            from src.predict import predict_future_range, get_latest_gw
+            from src.feature_engineering import get_fixture_context
+
+            # Check all active seasons for plan invalidation
+            bootstrap_path = CACHE_DIR / "fpl_api_bootstrap.json"
+            if bootstrap_path.exists():
+                bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+                elements = bootstrap.get("elements", [])
+
+                # Build squad changes from bootstrap
+                squad_changes = {}
+                for el in elements:
+                    if el.get("status") != "a" or (el.get("chance_of_playing_next_round") is not None and el["chance_of_playing_next_round"] < 75):
+                        squad_changes[el["id"]] = {
+                            "status": el.get("status", "a"),
+                            "chance_of_playing": el.get("chance_of_playing_next_round"),
+                            "web_name": el.get("web_name", "Unknown"),
+                        }
+
+                if squad_changes:
+                    print(f"\n  {len(squad_changes)} players with availability concerns detected.")
+                    _broadcast(f"Availability check: {len(squad_changes)} players flagged", event="progress")
+        except Exception as exc:
+            print(f"  Auto-replan check failed (non-fatal): {exc}")
 
     started = _run_in_background("Refresh Data", do_refresh)
     if not started:
@@ -1523,8 +1551,131 @@ def api_season_transfer_history():
 
 
 # ---------------------------------------------------------------------------
+# Strategic Planning Endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/season/strategic-plan", methods=["GET", "POST"])
+def api_season_strategic_plan():
+    """Generate (POST) or fetch (GET) strategic plan."""
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        manager_id = body.get("manager_id")
+        if not manager_id:
+            return jsonify({"error": "manager_id is required."}), 400
+        try:
+            manager_id = int(manager_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "manager_id must be an integer."}), 400
+
+        def do_plan():
+            _season_mgr.generate_recommendation(manager_id, progress_fn=print)
+
+        started = _run_in_background("Strategic Plan", do_plan)
+        if not started:
+            return jsonify({"error": "Another task is already running."}), 409
+        return jsonify({"status": "started"})
+
+    # GET
+    manager_id = request.args.get("manager_id")
+    if not manager_id:
+        return jsonify({"error": "manager_id is required."}), 400
+    try:
+        manager_id = int(manager_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "manager_id must be an integer."}), 400
+
+    season = _season_db.get_season(manager_id)
+    if not season:
+        return jsonify({"error": "No active season."}), 404
+
+    plan_row = _season_db.get_strategic_plan(season["id"])
+    if not plan_row:
+        return jsonify({"error": "No strategic plan generated yet."}), 404
+
+    plan = {}
+    heatmap = {}
+    try:
+        plan = json.loads(plan_row.get("plan_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+    try:
+        heatmap = json.loads(plan_row.get("chip_heatmap_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    changelog = _season_db.get_plan_changelog(season["id"], limit=20)
+
+    return jsonify({
+        "plan": plan,
+        "chip_heatmap": heatmap,
+        "as_of_gw": plan_row.get("as_of_gw"),
+        "created_at": plan_row.get("created_at"),
+        "changelog": changelog,
+    })
+
+
+@app.route("/api/season/chip-heatmap")
+def api_season_chip_heatmap():
+    """Chip values across remaining GWs."""
+    manager_id = request.args.get("manager_id")
+    if not manager_id:
+        return jsonify({"error": "manager_id is required."}), 400
+    try:
+        manager_id = int(manager_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "manager_id must be an integer."}), 400
+
+    season = _season_db.get_season(manager_id)
+    if not season:
+        return jsonify({"error": "No active season."}), 404
+
+    plan_row = _season_db.get_strategic_plan(season["id"])
+    if not plan_row:
+        return jsonify({"error": "No strategic plan generated yet."}), 404
+
+    heatmap = {}
+    try:
+        heatmap = json.loads(plan_row.get("chip_heatmap_json") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Find best GW for each chip
+    best_gws = {}
+    for chip, gw_vals in heatmap.items():
+        if gw_vals:
+            # gw_vals keys are strings from JSON
+            best_gw = max(gw_vals.items(), key=lambda x: x[1])
+            best_gws[chip] = {"gw": best_gw[0], "value": best_gw[1]}
+
+    return jsonify({
+        "chip_heatmap": heatmap,
+        "best_gws": best_gws,
+        "as_of_gw": plan_row.get("as_of_gw"),
+    })
+
+
+@app.route("/api/season/plan-changelog")
+def api_season_plan_changelog():
+    """Return plan change history."""
+    manager_id = request.args.get("manager_id")
+    if not manager_id:
+        return jsonify({"error": "manager_id is required."}), 400
+    try:
+        manager_id = int(manager_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "manager_id must be an integer."}), 400
+
+    season = _season_db.get_season(manager_id)
+    if not season:
+        return jsonify({"error": "No active season."}), 404
+
+    changelog = _season_db.get_plan_changelog(season["id"])
+    return jsonify({"changelog": changelog})
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=9876, debug=True, threaded=True)
+    app.run(host="127.0.0.1", port=9875, debug=True, threaded=True)

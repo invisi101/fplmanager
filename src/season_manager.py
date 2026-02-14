@@ -13,10 +13,32 @@ from src.data_fetcher import (
 )
 from src.season_db import SeasonDB
 from src.solver import scrub_nan, solve_milp_team, solve_transfer_milp
+from src.strategy import (
+    ChipEvaluator,
+    MultiWeekPlanner,
+    CaptainPlanner,
+    PlanSynthesizer,
+    apply_availability_adjustments,
+    detect_plan_invalidation,
+)
 
 ELEMENT_TYPE_MAP = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 ALL_CHIPS = {"wildcard", "freehit", "bboost", "3xc"}
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
+
+
+def scrub_nan_recursive(obj):
+    """Recursively replace NaN/inf with None in nested structures."""
+    import math
+    if isinstance(obj, dict):
+        return {k: scrub_nan_recursive(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [scrub_nan_recursive(v) for v in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    return obj
 
 
 class SeasonManager:
@@ -228,7 +250,11 @@ class SeasonManager:
     # -------------------------------------------------------------------
 
     def generate_recommendation(self, manager_id: int, progress_fn=None) -> dict:
-        """Generate pre-GW transfer, captain, and chip advice."""
+        """Generate pre-GW transfer, captain, and chip advice.
+
+        Now includes strategic planning: multi-GW predictions, chip heatmap,
+        multi-week transfer plan, captain plan, and chip synergies.
+        """
         def log(msg):
             if progress_fn:
                 progress_fn(msg)
@@ -304,27 +330,168 @@ class SeasonManager:
             sum(pred_map.get(p["player_id"], {}).get(target_col, 0) or 0 for p in current_starters), 2
         )
 
-        # --- Run MILP transfer solver ---
-        log("  Running transfer solver...")
-        pool = pred_df.dropna(subset=["position", "cost", target_col]).copy()
-        if "team_code" in pool.columns:
-            pool["team"] = pool["team_code"].map(code_to_short).fillna("")
+        # =====================================================================
+        # STRATEGIC PLANNING: Multi-GW predictions + chip heatmap + transfer plan
+        # =====================================================================
+        strategic_plan = None
+        chip_heatmap = {}
+        multi_week_plan = []
 
-        result = solve_transfer_milp(
-            pool, current_squad_ids, target_col,
-            budget=total_budget, max_transfers=free_transfers,
-        )
+        try:
+            log("  Generating multi-GW predictions...")
+            from src.data_fetcher import load_all_data
+            from src.feature_engineering import build_features, get_fixture_context
+            from src.predict import predict_future_range, get_latest_gw
 
+            data = load_all_data()
+            df = build_features(data)
+            latest_gw = get_latest_gw(df)
+            fixture_context = get_fixture_context(data)
+
+            # Build current snapshot for predictions
+            from src.model import CURRENT_SEASON
+            current_snapshot = df[
+                (df["season"] == CURRENT_SEASON) & (df["gameweek"] == latest_gw)
+            ].copy()
+            if current_snapshot.empty:
+                current_snapshot = df[df["gameweek"] == latest_gw].copy()
+
+            # Step 1: Multi-GW predictions (GW+1 to GW+8)
+            future_predictions = predict_future_range(
+                current_snapshot, df, fixture_context, latest_gw, horizon=8,
+            )
+
+            if future_predictions:
+                # Enrich predictions with position/cost/team_code for solver
+                for gw, gw_df in future_predictions.items():
+                    meta = pred_df[["player_id", "position", "cost", "team_code", "web_name"]].drop_duplicates("player_id")
+                    enriched = gw_df.merge(meta, on="player_id", how="left")
+                    enriched["team"] = enriched["team_code"].map(code_to_short).fillna("")
+                    future_predictions[gw] = enriched
+
+                # Apply availability adjustments (Phase 4c)
+                log("  Applying availability adjustments...")
+                elements = bootstrap.get("elements", [])
+                future_predictions = apply_availability_adjustments(
+                    future_predictions, elements,
+                )
+
+                # Step 2: Chip heatmap
+                log("  Evaluating chips across all GWs...")
+                chip_evaluator = ChipEvaluator()
+
+                # Determine available chips
+                chips_used_list = history.get("chips", [])
+                chips_used_names = {c["name"] for c in chips_used_list}
+                available_chips = set()
+                wc_events = [c["event"] for c in chips_used_list if c["name"] == "wildcard"]
+                if next_gw <= 19:
+                    if not any(e <= 19 for e in wc_events):
+                        available_chips.add("wildcard")
+                else:
+                    if not any(e >= 20 for e in wc_events):
+                        available_chips.add("wildcard")
+                for chip in ["freehit", "bboost", "3xc"]:
+                    if chip not in chips_used_names:
+                        available_chips.add(chip)
+
+                fixture_calendar = self.db.get_fixture_calendar(
+                    season_id, from_gw=next_gw,
+                )
+
+                chip_heatmap = chip_evaluator.evaluate_all_chips(
+                    current_squad_ids, total_budget, available_chips,
+                    future_predictions, fixture_calendar,
+                )
+
+                # Step 2b: Chip synergies
+                log("  Evaluating chip synergies...")
+                chip_synergies = chip_evaluator.evaluate_chip_synergies(
+                    chip_heatmap, available_chips,
+                )
+
+                # Step 3: Multi-week transfer plan
+                log("  Planning transfers over 3 GWs...")
+                planner = MultiWeekPlanner()
+                price_alerts = self.get_price_alerts(season_id)
+
+                # Determine chip plan from heatmap for transfer planner
+                chip_plan_for_planner = None
+                if chip_heatmap:
+                    synthesizer = PlanSynthesizer()
+                    chip_schedule = synthesizer._plan_chip_schedule(
+                        chip_heatmap, chip_synergies, available_chips,
+                    )
+                    chip_plan_for_planner = {"chip_gws": chip_schedule}
+
+                multi_week_plan = planner.plan_transfers(
+                    current_squad_ids, total_budget, free_transfers,
+                    future_predictions, fixture_calendar, price_alerts,
+                    chip_plan=chip_plan_for_planner,
+                )
+
+                # Step 4: Captain plan
+                log("  Planning captaincy...")
+                captain_planner = CaptainPlanner()
+                captain_plan = captain_planner.plan_captaincy(
+                    current_squad_ids, future_predictions, multi_week_plan,
+                )
+
+                # Step 5: Synthesize full plan
+                log("  Synthesizing strategic plan...")
+                synthesizer = PlanSynthesizer()
+                strategic_plan = synthesizer.synthesize(
+                    multi_week_plan, captain_plan, chip_heatmap,
+                    chip_synergies, available_chips,
+                )
+
+                # Step 6: Compare to previous plan, log changes
+                prev_plan_row = self.db.get_strategic_plan(season_id)
+                if prev_plan_row and prev_plan_row.get("plan_json"):
+                    try:
+                        prev_plan = json.loads(prev_plan_row["plan_json"])
+                        self._log_plan_changes(
+                            season_id, next_gw, prev_plan, strategic_plan,
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # Step 7: Store strategic plan
+                self.db.save_strategic_plan(
+                    season_id=season_id,
+                    as_of_gw=next_gw,
+                    plan_json=json.dumps(scrub_nan_recursive(strategic_plan)),
+                    chip_heatmap_json=json.dumps(scrub_nan_recursive(chip_heatmap)),
+                )
+
+                log("  Strategic plan saved.")
+            else:
+                log("  Warning: No future predictions generated (missing fixtures?)")
+
+        except Exception as exc:
+            log(f"  Strategic planning failed (non-fatal): {exc}")
+            import traceback
+            traceback.print_exc()
+
+        # =====================================================================
+        # EXISTING LOGIC: single-GW recommendation (backwards compatible)
+        # =====================================================================
+
+        # --- Use multi-week plan GW1 if available, else fall back to single-GW solver ---
         transfers = []
         new_squad_json = None
         predicted_points = current_xi_points
-        if result:
-            predicted_points = result["starting_points"]
-            new_squad_json = json.dumps(result["players"])
-            # Build transfer pairs, enriched with stats
+
+        if multi_week_plan and multi_week_plan[0].get("transfers_in"):
+            # Use GW+1 from the multi-week plan
+            gw1 = multi_week_plan[0]
+            predicted_points = gw1.get("predicted_points", current_xi_points)
+
+            # Build transfer pairs from the multi-week plan
             out_list = []
             in_list = []
-            for pid in result.get("transfers_out_ids", set()):
+            for t in gw1.get("transfers_out", []):
+                pid = t.get("player_id")
                 out_info = dict(next((p for p in current_squad if p["player_id"] == pid), {}))
                 el = elements_map.get(pid, {})
                 pred = pred_map.get(pid, {})
@@ -334,55 +501,104 @@ class SeasonManager:
                 out_info["total_points"] = el.get("total_points", 0)
                 out_info["direction"] = "out"
                 out_list.append(out_info)
-            for pid in result.get("transfers_in_ids", set()):
-                in_info = dict(next((p for p in result["players"] if p["player_id"] == pid), {}))
+            for t in gw1.get("transfers_in", []):
+                pid = t.get("player_id")
+                in_info = dict(t)
                 el = elements_map.get(pid, {})
                 in_info["event_points"] = el.get("event_points", 0)
                 in_info["total_points"] = el.get("total_points", 0)
                 in_info["direction"] = "in"
                 in_list.append(in_info)
-            # Pair by position for neat display
+
             pos_order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
             out_list.sort(key=lambda p: pos_order.get(p.get("position"), 9))
             in_list.sort(key=lambda p: pos_order.get(p.get("position"), 9))
             for i, out_p in enumerate(out_list):
                 in_p = in_list[i] if i < len(in_list) else {}
                 transfers.append({"out": out_p, "in": in_p})
+        else:
+            # Fall back to single-GW MILP solver
+            log("  Running single-GW transfer solver (fallback)...")
+            pool = pred_df.dropna(subset=["position", "cost", target_col]).copy()
+            if "team_code" in pool.columns:
+                pool["team"] = pool["team_code"].map(code_to_short).fillna("")
+
+            result = solve_transfer_milp(
+                pool, current_squad_ids, target_col,
+                budget=total_budget, max_transfers=free_transfers,
+            )
+
+            if result:
+                predicted_points = result["starting_points"]
+                new_squad_json = json.dumps(result["players"])
+                out_list = []
+                in_list = []
+                for pid in result.get("transfers_out_ids", set()):
+                    out_info = dict(next((p for p in current_squad if p["player_id"] == pid), {}))
+                    el = elements_map.get(pid, {})
+                    pred = pred_map.get(pid, {})
+                    out_info["event_points"] = el.get("event_points", 0)
+                    out_info["predicted_next_gw_points"] = pred.get("predicted_next_gw_points")
+                    out_info["predicted_next_3gw_points"] = pred.get("predicted_next_3gw_points")
+                    out_info["total_points"] = el.get("total_points", 0)
+                    out_info["direction"] = "out"
+                    out_list.append(out_info)
+                for pid in result.get("transfers_in_ids", set()):
+                    in_info = dict(next((p for p in result["players"] if p["player_id"] == pid), {}))
+                    el = elements_map.get(pid, {})
+                    in_info["event_points"] = el.get("event_points", 0)
+                    in_info["total_points"] = el.get("total_points", 0)
+                    in_info["direction"] = "in"
+                    in_list.append(in_info)
+                pos_order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
+                out_list.sort(key=lambda p: pos_order.get(p.get("position"), 9))
+                in_list.sort(key=lambda p: pos_order.get(p.get("position"), 9))
+                for i, out_p in enumerate(out_list):
+                    in_p = in_list[i] if i < len(in_list) else {}
+                    transfers.append({"out": out_p, "in": in_p})
 
         # --- Captain pick ---
         log("  Picking captain...")
-        captain_col = "captain_score"
-        if captain_col not in pred_df.columns:
-            captain_col = target_col
+        captain_id = None
+        captain_name = None
 
-        # Among squad players (new squad if transfers, else current)
-        squad_ids = set()
-        if result:
-            squad_ids = {p["player_id"] for p in result["players"]}
-        else:
+        # Use strategic captain plan if available
+        if strategic_plan and strategic_plan.get("timeline"):
+            first_entry = strategic_plan["timeline"][0]
+            captain_id = first_entry.get("captain_id")
+            captain_name = first_entry.get("captain_name")
+
+        if captain_id is None:
+            captain_col = "captain_score"
+            if captain_col not in pred_df.columns:
+                captain_col = target_col
             squad_ids = current_squad_ids
+            if multi_week_plan and multi_week_plan[0].get("squad_ids"):
+                squad_ids = set(multi_week_plan[0]["squad_ids"])
+            squad_preds = pred_df[pred_df["player_id"].isin(squad_ids)].copy()
+            if not squad_preds.empty and captain_col in squad_preds.columns:
+                captain_row = squad_preds.loc[squad_preds[captain_col].idxmax()]
+                captain_id = int(captain_row["player_id"])
+                captain_name = captain_row.get("web_name", "Unknown")
 
-        squad_preds = pred_df[pred_df["player_id"].isin(squad_ids)].copy()
-        if not squad_preds.empty and captain_col in squad_preds.columns:
-            captain_row = squad_preds.loc[squad_preds[captain_col].idxmax()]
-            captain_id = int(captain_row["player_id"])
-            captain_name = captain_row.get("web_name", "Unknown")
-        else:
-            captain_id = None
-            captain_name = None
-
-        # --- Evaluate chips ---
+        # --- Evaluate chips (single-GW, backwards compatible) ---
         log("  Evaluating chips...")
         chip_values = self._evaluate_chips(
             season_id, manager_id, bootstrap, pred_df, current_squad_ids,
             total_budget, history,
         )
 
-        # Suggest chip if any has high value
+        # Use strategic chip schedule for suggestion if available
         chip_suggestion = None
-        if chip_values:
+        if strategic_plan and strategic_plan.get("chip_schedule"):
+            for chip_name, chip_gw in strategic_plan["chip_schedule"].items():
+                if chip_gw == next_gw:
+                    chip_suggestion = chip_name
+                    break
+
+        if chip_suggestion is None and chip_values:
             best_chip = max(chip_values.items(), key=lambda x: x[1])
-            if best_chip[1] > 5.0:  # Threshold: >5 pts gain
+            if best_chip[1] > 5.0:
                 chip_suggestion = best_chip[0]
 
         # --- Bank analysis ---
@@ -413,11 +629,51 @@ class SeasonManager:
             "captain": {"id": captain_id, "name": captain_name},
             "chip_suggestion": chip_suggestion,
             "chip_values": chip_values,
+            "chip_heatmap": scrub_nan_recursive(chip_heatmap),
             "bank_analysis": bank_analysis,
             "predicted_points": predicted_points,
             "current_xi_points": current_xi_points,
             "free_transfers": free_transfers,
+            "strategic_plan": scrub_nan_recursive(strategic_plan) if strategic_plan else None,
+            "multi_week_plan": scrub_nan_recursive(multi_week_plan) if multi_week_plan else None,
         }
+
+    def _log_plan_changes(self, season_id: int, gameweek: int,
+                          old_plan: dict, new_plan: dict):
+        """Compare old and new strategic plans and log differences."""
+        old_schedule = old_plan.get("chip_schedule", {})
+        new_schedule = new_plan.get("chip_schedule", {})
+
+        for chip in set(list(old_schedule.keys()) + list(new_schedule.keys())):
+            old_gw = old_schedule.get(chip)
+            new_gw = new_schedule.get(chip)
+            if old_gw != new_gw:
+                self.db.save_plan_change(
+                    season_id=season_id,
+                    gameweek=gameweek,
+                    change_type="chip_schedule",
+                    description=f"{chip} rescheduled",
+                    old_value=f"GW{old_gw}" if old_gw else "unscheduled",
+                    new_value=f"GW{new_gw}" if new_gw else "unscheduled",
+                    reason="Updated predictions/fixtures",
+                )
+
+        # Compare captain plan
+        old_timeline = old_plan.get("timeline", [])
+        new_timeline = new_plan.get("timeline", [])
+        old_caps = {e["gw"]: e.get("captain_name") for e in old_timeline if "captain_name" in e}
+        new_caps = {e["gw"]: e.get("captain_name") for e in new_timeline if "captain_name" in e}
+        for gw in set(list(old_caps.keys()) + list(new_caps.keys())):
+            if old_caps.get(gw) != new_caps.get(gw) and old_caps.get(gw) and new_caps.get(gw):
+                self.db.save_plan_change(
+                    season_id=season_id,
+                    gameweek=gameweek,
+                    change_type="captain",
+                    description=f"GW{gw} captain changed",
+                    old_value=old_caps.get(gw, ""),
+                    new_value=new_caps.get(gw, ""),
+                    reason="Updated predictions",
+                )
 
     # -------------------------------------------------------------------
     # Record Actual Results
