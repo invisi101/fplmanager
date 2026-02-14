@@ -1414,6 +1414,7 @@
       </div>
       <div class="season-chart-row">
         <div class="season-chart-box"><h4>Budget Evolution</h4><canvas id="budgetChart" height="180"></canvas></div>
+        <div class="season-chart-box"><h4>Prediction Accuracy</h4><canvas id="accuracyChart" height="180"></canvas></div>
       </div>
     </div>
 
@@ -1481,12 +1482,28 @@
       </div>
       <h4 style="margin-bottom:8px;font-size:14px">Price Alerts</h4>
       <div id="priceAlertsContainer"></div>
+      <h4 style="margin:16px 0 8px;font-size:14px">Price Predictions</h4>
+      <div id="pricePredictionsDisplay"></div>
+      <h4 style="margin:16px 0 8px;font-size:14px">Price History</h4>
+      <div class="season-chart-box"><canvas id="priceHistoryChart" height="200"></canvas></div>
       <h4 style="margin:16px 0 8px;font-size:14px">Squad Prices</h4>
       <div id="priceTableContainer"></div>
     </div>
 
     <!-- Strategy Section -->
     <div class="season-section" id="seasonStrategy">
+      <!-- Plan Health Banner -->
+      <div id="planHealthBanner" style="display:none;background:var(--surface2);border-radius:8px;padding:12px 16px;margin-bottom:16px;border-left:3px solid var(--red)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:600;color:var(--red)">Plan Health Issue</div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-primary" style="font-size:11px;padding:4px 10px" onclick="generateStrategicPlan()">Regenerate Plan</button>
+            <button class="btn" style="font-size:11px;padding:4px 10px" onclick="document.getElementById('planHealthBanner').style.display='none'">Dismiss</button>
+          </div>
+        </div>
+        <div id="planHealthTriggers" style="font-size:12px;color:var(--text2)"></div>
+      </div>
+
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <button class="btn btn-primary" onclick="generateStrategicPlan()">Generate Plan</button>
         <span id="strategyPlanStatus" style="font-size:12px;color:var(--text2)"></span>
@@ -1582,6 +1599,8 @@ function connectSSE() {
         // Reload season data if season tab is active
         if (typeof seasonOnTaskDone === 'function') seasonOnTaskDone();
       }
+    } else if (evt === 'plan_invalidated') {
+      if (typeof checkPlanHealth === 'function') checkPlanHealth();
     } else if (evt === 'progress') {
       appendLog(msg);
     }
@@ -2820,7 +2839,7 @@ function switchSeasonSection(btn) {
   if (section === 'transfers') loadTransferHistory();
   if (section === 'chips') loadChips();
   if (section === 'prices') loadPrices();
-  if (section === 'strategy') loadStrategicPlan();
+  if (section === 'strategy') { loadStrategicPlan(); checkPlanHealth(); }
 }
 
 function loadSeasonDashboard() {
@@ -2875,6 +2894,10 @@ function renderSeasonOverview(data) {
   drawLineChart('budgetChart', data.budget_history || [], 'gameweek', 'total_value', {
     color: '#fbbf24', label: 'Total Value', decimals: 1
   });
+  drawDualLineChart('accuracyChart', data.accuracy_history || [], 'gameweek',
+    'predicted_points', 'actual_points', {
+      color1: '#6c63ff', color2: '#2dd4a0', label1: 'Predicted', label2: 'Actual'
+    });
 }
 
 function renderSeasonTeamView(d) {
@@ -3094,6 +3117,73 @@ function drawBarChart(canvasId, data, xKey, yKey, opts = {}) {
     const val = Math.round(yMax - (yMax / 3) * i);
     ctx.fillText(val, pad.left - 6, y + 3);
   }
+}
+
+function drawDualLineChart(canvasId, data, xKey, y1Key, y2Key, opts = {}) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !data.length) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = 180 * dpr;
+  canvas.style.width = rect.width + 'px';
+  canvas.style.height = '180px';
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = 180;
+  const pad = {top: 10, right: 10, bottom: 25, left: 50};
+  const y1s = data.map(d => d[y1Key]).filter(v => v != null);
+  const y2s = data.map(d => d[y2Key]).filter(v => v != null);
+  const allY = y1s.concat(y2s);
+  if (!allY.length) return;
+  let yMin = Math.min(...allY), yMax = Math.max(...allY);
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, W, H);
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (chartH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    const val = yMax - ((yMax - yMin) / 4) * i;
+    ctx.fillStyle = '#8e91a4'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(val), pad.left - 6, y + 3);
+  }
+  // Line 1 (predicted)
+  const c1 = opts.color1 || '#6c63ff';
+  ctx.strokeStyle = c1; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.beginPath();
+  data.forEach((d, i) => {
+    if (d[y1Key] == null) return;
+    const x = pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
+    const y = pad.top + (1 - (d[y1Key] - yMin) / (yMax - yMin)) * chartH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }); ctx.stroke();
+  // Line 2 (actual)
+  const c2 = opts.color2 || '#2dd4a0';
+  ctx.strokeStyle = c2; ctx.lineWidth = 2; ctx.beginPath();
+  data.forEach((d, i) => {
+    if (d[y2Key] == null) return;
+    const x = pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
+    const y = pad.top + (1 - (d[y2Key] - yMin) / (yMax - yMin)) * chartH;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }); ctx.stroke();
+  // X-axis
+  ctx.fillStyle = '#8e91a4'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(data.length / 8));
+  data.forEach((d, i) => {
+    if (i % step === 0 || i === data.length - 1) {
+      const x = pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
+      ctx.fillText('GW' + d[xKey], x, H - 4);
+    }
+  });
+  // Legend
+  ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+  const lx = pad.left + 8;
+  ctx.fillStyle = c1; ctx.fillRect(lx, pad.top + 2, 12, 3);
+  ctx.fillText(opts.label1 || y1Key, lx + 16, pad.top + 7);
+  ctx.fillStyle = c2; ctx.fillRect(lx + 80, pad.top + 2, 12, 3);
+  ctx.fillText(opts.label2 || y2Key, lx + 96, pad.top + 7);
 }
 
 // --- Weekly Workflow ---
@@ -3641,6 +3731,8 @@ function loadPrices() {
       renderPriceAlerts(d.alerts || []);
       renderPriceTable(d.prices || []);
     });
+  loadPricePredictions();
+  loadPriceHistory();
 }
 
 function updatePrices() {
@@ -3696,6 +3788,128 @@ function renderPriceTable(prices) {
   });
   html += '</tbody></table></div>';
   document.getElementById('priceTableContainer').innerHTML = html;
+}
+
+function loadPricePredictions() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  fetch(`/api/season/price-predictions?manager_id=${mid}`)
+    .then(r => r.json())
+    .then(d => {
+      const el = document.getElementById('pricePredictionsDisplay');
+      if (!el) return;
+      const preds = d.predictions || [];
+      if (!preds.length) {
+        el.innerHTML = '<p style="color:var(--text2);font-size:13px">No price movements predicted.</p>';
+        return;
+      }
+      const risers = preds.filter(p => p.direction === 'rise').slice(0, 10);
+      const fallers = preds.filter(p => p.direction === 'fall').slice(0, 10);
+      let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+      // Risers
+      html += '<div><h5 style="color:var(--green);margin-bottom:6px;font-size:13px">Likely Risers</h5>';
+      if (risers.length) {
+        html += '<div class="bt-table-wrap"><table class="bt-table"><thead><tr><th>Player</th><th>Price</th><th>Own%</th><th>Prob</th></tr></thead><tbody>';
+        risers.forEach(p => {
+          const pct = Math.round(p.probability * 100);
+          html += `<tr><td>${p.web_name} <span style="color:var(--text2)">${p.team}</span></td><td>${p.price.toFixed(1)}m</td><td>${p.ownership}%</td><td><div style="display:flex;align-items:center;gap:4px"><div style="width:40px;height:8px;background:var(--surface2);border-radius:4px"><div style="width:${pct}%;height:100%;background:var(--green);border-radius:4px"></div></div>${pct}%</div></td></tr>`;
+        });
+        html += '</tbody></table></div>';
+      } else { html += '<p style="color:var(--text2);font-size:12px">None</p>'; }
+      html += '</div>';
+      // Fallers
+      html += '<div><h5 style="color:var(--red);margin-bottom:6px;font-size:13px">Likely Fallers</h5>';
+      if (fallers.length) {
+        html += '<div class="bt-table-wrap"><table class="bt-table"><thead><tr><th>Player</th><th>Price</th><th>Own%</th><th>Prob</th></tr></thead><tbody>';
+        fallers.forEach(p => {
+          const pct = Math.round(p.probability * 100);
+          html += `<tr><td>${p.web_name} <span style="color:var(--text2)">${p.team}</span></td><td>${p.price.toFixed(1)}m</td><td>${p.ownership}%</td><td><div style="display:flex;align-items:center;gap:4px"><div style="width:40px;height:8px;background:var(--surface2);border-radius:4px"><div style="width:${pct}%;height:100%;background:var(--red);border-radius:4px"></div></div>${pct}%</div></td></tr>`;
+        });
+        html += '</tbody></table></div>';
+      } else { html += '<p style="color:var(--text2);font-size:12px">None</p>'; }
+      html += '</div></div>';
+      el.innerHTML = html;
+    });
+}
+
+function loadPriceHistory() {
+  const mid = getSeasonManagerId();
+  if (!mid) return;
+  fetch(`/api/season/price-history?manager_id=${mid}&days=14`)
+    .then(r => r.json())
+    .then(d => {
+      const history = d.history || {};
+      const playerIds = Object.keys(history);
+      if (!playerIds.length) return;
+      // Pick top 5 players with most snapshots
+      const sorted = playerIds.sort((a, b) => (history[b].snapshots || []).length - (history[a].snapshots || []).length).slice(0, 5);
+      const canvas = document.getElementById('priceHistoryChart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.parentElement.clientWidth || 400;
+      const h = 200;
+      canvas.width = w * dpr; canvas.height = h * dpr;
+      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+      const pad = {l: 50, r: 10, t: 20, b: 30};
+      const cw = w - pad.l - pad.r;
+      const ch = h - pad.t - pad.b;
+      // Collect all dates and price range
+      let allDates = new Set();
+      let minP = Infinity, maxP = -Infinity;
+      sorted.forEach(pid => {
+        (history[pid].snapshots || []).forEach(s => {
+          allDates.add(s.date);
+          if (s.price < minP) minP = s.price;
+          if (s.price > maxP) maxP = s.price;
+        });
+      });
+      allDates = [...allDates].sort();
+      if (allDates.length < 2 || maxP === minP) { maxP = minP + 1; }
+      const colors = ['#6c63ff', '#2dd4a0', '#fbbf24', '#ef4444', '#38bdf8'];
+      // Grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.t + (ch / 4) * i;
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+      }
+      // Lines
+      sorted.forEach((pid, idx) => {
+        const snaps = (history[pid].snapshots || []).sort((a, b) => a.date.localeCompare(b.date));
+        if (snaps.length < 2) return;
+        ctx.strokeStyle = colors[idx % colors.length];
+        ctx.lineWidth = 2; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        snaps.forEach((s, i) => {
+          const x = pad.l + (allDates.indexOf(s.date) / (allDates.length - 1)) * cw;
+          const y = pad.t + ch - ((s.price - minP) / (maxP - minP)) * ch;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+        // Label
+        const last = snaps[snaps.length - 1];
+        const lx = pad.l + (allDates.indexOf(last.date) / (allDates.length - 1)) * cw;
+        const ly = pad.t + ch - ((last.price - minP) / (maxP - minP)) * ch;
+        ctx.fillStyle = colors[idx % colors.length];
+        ctx.font = '10px monospace'; ctx.textAlign = 'left';
+        ctx.fillText(history[pid].web_name, lx + 4, ly - 4);
+      });
+      // Y-axis
+      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
+      for (let i = 0; i <= 4; i++) {
+        const val = minP + ((maxP - minP) / 4) * (4 - i);
+        ctx.fillText(val.toFixed(1), pad.l - 4, pad.t + (ch / 4) * i + 4);
+      }
+      // X-axis
+      ctx.textAlign = 'center';
+      const step = Math.max(1, Math.floor(allDates.length / 5));
+      for (let i = 0; i < allDates.length; i += step) {
+        const x = pad.l + (i / (allDates.length - 1)) * cw;
+        ctx.fillText(allDates[i].slice(5), x, h - 8);
+      }
+    });
 }
 
 // Hook into SSE task_done to reload season data
@@ -3858,6 +4072,32 @@ function loadStrategicPlan() {
         return;
       }
       renderStrategicPlan(d);
+    });
+}
+
+function checkPlanHealth() {
+  const mid = getSeasonMid();
+  if (!mid) return;
+  fetch(`/api/season/plan-health?manager_id=${mid}`)
+    .then(r => r.json())
+    .then(d => {
+      const banner = document.getElementById('planHealthBanner');
+      const triggers = document.getElementById('planHealthTriggers');
+      if (!banner || !triggers) return;
+      if (d.healthy) {
+        banner.style.display = 'none';
+        return;
+      }
+      banner.style.display = 'block';
+      const list = (d.triggers || []).slice(0, 5);
+      let html = '';
+      list.forEach(t => {
+        const color = t.severity === 'critical' ? 'var(--red)' : 'var(--yellow, #fbbf24)';
+        html += `<div style="margin-bottom:4px"><span style="color:${color};font-weight:600">[${t.severity}]</span> ${t.description}</div>`;
+      });
+      const s = d.summary || {};
+      html += `<div style="margin-top:6px;font-size:11px;color:var(--text2)">${s.critical || 0} critical, ${s.moderate || 0} moderate issue(s)</div>`;
+      triggers.innerHTML = html;
     });
 }
 

@@ -341,6 +341,22 @@ def api_refresh_data():
                 if squad_changes:
                     print(f"\n  {len(squad_changes)} players with availability concerns detected.")
                     _broadcast(f"Availability check: {len(squad_changes)} players flagged", event="progress")
+
+                # Check plan health for all active seasons
+                db = SeasonDB()
+                conn = db._conn()
+                seasons = conn.execute("SELECT manager_id FROM season WHERE active=1").fetchall()
+                conn.close()
+                for s in seasons:
+                    mid = s["manager_id"]
+                    health = _season_mgr.check_plan_health(mid)
+                    if not health["healthy"]:
+                        desc = "; ".join(t["description"] for t in health["triggers"][:3])
+                        print(f"  Plan health issue for manager {mid}: {desc}")
+                        _broadcast(
+                            json.dumps({"manager_id": mid, "triggers": health["triggers"][:5], "summary": health["summary"]}),
+                            event="plan_invalidated",
+                        )
         except Exception as exc:
             print(f"  Auto-replan check failed (non-fatal): {exc}")
 
@@ -1158,9 +1174,11 @@ def api_transfer_recommendations():
     )
 
     # --- Solve ---
+    captain_col_arg = "captain_score" if "captain_score" in pool.columns else None
     result = _solve_transfer_milp(
         pool, current_squad_ids, target,
         budget=total_budget, max_transfers=max_transfers,
+        captain_col=captain_col_arg,
     )
     if result is None:
         return jsonify({"error": "Could not find a valid transfer solution."}), 400
@@ -1782,6 +1800,71 @@ def api_preseason_result():
         "chip_schedule": chip_schedule,
         "chip_heatmap": chip_heatmap,
     })
+
+
+@app.route("/api/season/plan-health")
+def api_season_plan_health():
+    """Check if the current strategic plan is still valid."""
+    manager_id = request.args.get("manager_id")
+    if not manager_id:
+        return jsonify({"error": "manager_id is required."}), 400
+    try:
+        manager_id = int(manager_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "manager_id must be an integer."}), 400
+
+    result = _season_mgr.check_plan_health(manager_id)
+    return jsonify(result)
+
+
+@app.route("/api/season/price-predictions")
+def api_season_price_predictions():
+    """Predict price changes using ownership-based algorithm."""
+    manager_id = request.args.get("manager_id")
+    if not manager_id:
+        return jsonify({"error": "manager_id is required."}), 400
+    try:
+        manager_id = int(manager_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "manager_id must be an integer."}), 400
+
+    season = _season_db.get_season(manager_id)
+    if not season:
+        return jsonify({"error": "No active season."}), 404
+
+    predictions = _season_mgr.predict_price_changes(season["id"])
+    risers = [p for p in predictions if p["direction"] == "rise"]
+    fallers = [p for p in predictions if p["direction"] == "fall"]
+    return jsonify({"predictions": predictions, "risers": risers, "fallers": fallers})
+
+
+@app.route("/api/season/price-history")
+def api_season_price_history():
+    """Get price movement history for players."""
+    manager_id = request.args.get("manager_id")
+    if not manager_id:
+        return jsonify({"error": "manager_id is required."}), 400
+    try:
+        manager_id = int(manager_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "manager_id must be an integer."}), 400
+
+    season = _season_db.get_season(manager_id)
+    if not season:
+        return jsonify({"error": "No active season."}), 404
+
+    player_ids_str = request.args.get("player_ids", "")
+    player_ids = None
+    if player_ids_str:
+        try:
+            player_ids = [int(x.strip()) for x in player_ids_str.split(",") if x.strip()]
+        except ValueError:
+            return jsonify({"error": "player_ids must be comma-separated integers."}), 400
+
+    days = request.args.get("days", 14, type=int)
+
+    history = _season_mgr.get_price_history(season["id"], player_ids=player_ids, days=days)
+    return jsonify({"history": history})
 
 
 @app.route("/api/season/plan-changelog")

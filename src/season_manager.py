@@ -372,9 +372,12 @@ class SeasonManager:
             )
 
             if future_predictions:
-                # Enrich predictions with position/cost/team_code for solver
+                # Enrich predictions with position/cost/team_code/captain_score for solver
+                meta_cols = ["player_id", "position", "cost", "team_code", "web_name"]
+                if "captain_score" in pred_df.columns:
+                    meta_cols.append("captain_score")
                 for gw, gw_df in future_predictions.items():
-                    meta = pred_df[["player_id", "position", "cost", "team_code", "web_name"]].drop_duplicates("player_id")
+                    meta = pred_df[meta_cols].drop_duplicates("player_id")
                     enriched = gw_df.merge(meta, on="player_id", how="left")
                     enriched["team"] = enriched["team_code"].map(code_to_short).fillna("")
                     future_predictions[gw] = enriched
@@ -421,9 +424,9 @@ class SeasonManager:
                 )
 
                 # Step 3: Multi-week transfer plan
-                log("  Planning transfers over 3 GWs...")
+                log("  Planning transfers over 5 GWs...")
                 planner = MultiWeekPlanner()
-                price_alerts = self.get_price_alerts(season_id)
+                price_alerts = self.predict_price_changes(season_id)
 
                 # Determine chip plan from heatmap for transfer planner
                 chip_plan_for_planner = None
@@ -941,6 +944,70 @@ class SeasonManager:
         return self.db.get_outcomes(season["id"])
 
     # -------------------------------------------------------------------
+    # Plan Health Check
+    # -------------------------------------------------------------------
+
+    def check_plan_health(self, manager_id: int) -> dict:
+        """Lightweight check: is the current strategic plan still valid?
+
+        Uses bootstrap availability data + stored plan. Does NOT regenerate
+        predictions (expensive). Returns {healthy, triggers, summary}.
+        """
+        season = self.db.get_season(manager_id)
+        if not season:
+            return {"healthy": True, "triggers": [], "summary": {"critical": 0, "moderate": 0}}
+        season_id = season["id"]
+
+        plan_row = self.db.get_strategic_plan(season_id)
+        if not plan_row or not plan_row.get("plan_json"):
+            return {"healthy": True, "triggers": [], "summary": {"critical": 0, "moderate": 0}}
+
+        try:
+            current_plan = json.loads(plan_row["plan_json"])
+        except (json.JSONDecodeError, TypeError):
+            return {"healthy": True, "triggers": [], "summary": {"critical": 0, "moderate": 0}}
+
+        # Load bootstrap for availability
+        try:
+            bootstrap = self._load_bootstrap()
+        except FileNotFoundError:
+            return {"healthy": True, "triggers": [], "summary": {"critical": 0, "moderate": 0}}
+
+        elements = bootstrap.get("elements", [])
+
+        # Build squad_changes from injured/doubtful players
+        squad_changes = {}
+        for el in elements:
+            status = el.get("status", "a")
+            chance = el.get("chance_of_playing_next_round")
+            if status != "a" or (chance is not None and chance < 75):
+                squad_changes[el["id"]] = {
+                    "status": status,
+                    "chance_of_playing": chance,
+                    "web_name": el.get("web_name", "Unknown"),
+                }
+
+        # Get fixture calendar for fixture change detection
+        fixture_calendar = self.db.get_fixture_calendar(season_id)
+
+        # Call detect_plan_invalidation (without new predictions — fixture/injury checks only)
+        triggers = detect_plan_invalidation(
+            current_plan,
+            new_predictions={},  # No fresh predictions — skip prediction shift checks
+            fixture_calendar=fixture_calendar,
+            squad_changes=squad_changes,
+        )
+
+        critical = sum(1 for t in triggers if t["severity"] == "critical")
+        moderate = sum(1 for t in triggers if t["severity"] == "moderate")
+
+        return {
+            "healthy": critical == 0,
+            "triggers": triggers,
+            "summary": {"critical": critical, "moderate": moderate},
+        }
+
+    # -------------------------------------------------------------------
     # Pre-Season Plan
     # -------------------------------------------------------------------
 
@@ -1384,6 +1451,95 @@ class SeasonManager:
         alerts.sort(key=lambda a: abs(a["net_transfers"]), reverse=True)
         return alerts
 
+    def predict_price_changes(self, season_id: int) -> list[dict]:
+        """Predict price changes using ownership-based algorithm approximation.
+
+        Uses: transfer_ratio = net_transfers / (ownership_pct * 100_000)
+        Rise if ratio > 0.005, fall if < -0.005.
+        Probability = min(1.0, abs(ratio) / 0.01).
+        """
+        bootstrap = self._load_bootstrap()
+        elements = bootstrap.get("elements", [])
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+        code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
+
+        predictions = []
+        for el in elements:
+            net = el.get("transfers_in_event", 0) - el.get("transfers_out_event", 0)
+            ownership = el.get("selected_by_percent")
+            if ownership is None:
+                continue
+            try:
+                ownership_pct = float(ownership)
+            except (TypeError, ValueError):
+                continue
+
+            if ownership_pct < 0.1:
+                continue
+
+            transfer_ratio = net / (ownership_pct * 100_000)
+
+            if abs(transfer_ratio) < 0.005:
+                continue
+
+            direction = "rise" if transfer_ratio > 0 else "fall"
+            probability = min(1.0, abs(transfer_ratio) / 0.01)
+            estimated_change = 0.1 if direction == "rise" else -0.1
+
+            tc = id_to_code.get(el.get("team"))
+            predictions.append({
+                "player_id": el["id"],
+                "web_name": el.get("web_name", "Unknown"),
+                "team": code_to_short.get(tc, ""),
+                "price": el.get("now_cost", 0) / 10,
+                "ownership": ownership_pct,
+                "net_transfers": net,
+                "transfer_ratio": round(transfer_ratio, 6),
+                "direction": direction,
+                "probability": round(probability, 3),
+                "estimated_change": estimated_change,
+            })
+
+        predictions.sort(key=lambda p: p["probability"], reverse=True)
+        return predictions
+
+    def get_price_history(self, season_id: int, player_ids: list[int] | None = None, days: int = 14) -> dict:
+        """Get price history from price_tracker table.
+
+        Returns {player_id: {web_name, snapshots: [{date, price, net_transfers}]}}.
+        """
+        all_history = self.db.get_price_history(season_id)
+        if not all_history:
+            return {}
+
+        # Filter by player_ids if provided
+        if player_ids:
+            pid_set = set(player_ids)
+            all_history = [h for h in all_history if h["player_id"] in pid_set]
+
+        # Filter by days
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        all_history = [h for h in all_history if h.get("snapshot_date", "") >= cutoff]
+
+        # Group by player_id
+        result = {}
+        for h in all_history:
+            pid = h["player_id"]
+            if pid not in result:
+                result[pid] = {
+                    "web_name": h.get("web_name", "Unknown"),
+                    "snapshots": [],
+                }
+            net = (h.get("transfers_in_event") or 0) - (h.get("transfers_out_event") or 0)
+            result[pid]["snapshots"].append({
+                "date": h.get("snapshot_date"),
+                "price": h.get("price"),
+                "net_transfers": net,
+            })
+
+        return result
+
     # -------------------------------------------------------------------
     # Fixture Calendar
     # -------------------------------------------------------------------
@@ -1502,6 +1658,17 @@ class SeasonManager:
             for s in snapshots
         ]
 
+        # Build accuracy history from outcomes
+        accuracy_history = []
+        for o in outcomes:
+            if o.get("recommended_points") is not None and o.get("actual_points") is not None:
+                accuracy_history.append({
+                    "gameweek": o["gameweek"],
+                    "predicted_points": o["recommended_points"],
+                    "actual_points": o["actual_points"],
+                    "delta": o.get("point_delta", 0),
+                })
+
         return {
             "season": season,
             "summary": {
@@ -1516,6 +1683,7 @@ class SeasonManager:
             "points_per_gw": points_per_gw,
             "chips_status": chips_status,
             "accuracy": accuracy,
+            "accuracy_history": accuracy_history,
             "recommendations_count": len(recommendations),
             "outcomes_count": len(outcomes),
         }

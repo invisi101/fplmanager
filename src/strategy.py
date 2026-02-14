@@ -234,7 +234,7 @@ class ChipEvaluator:
         for gw in all_gws:
             if gw in future_predictions:
                 # Sum predictions over next 3 GWs from this point
-                look_ahead_gws = [g for g in pred_gws if gw <= g <= gw + 2]
+                look_ahead_gws = [g for g in pred_gws if gw <= g <= gw + 4]
                 if not look_ahead_gws:
                     values[gw] = 0.0
                     continue
@@ -356,7 +356,7 @@ class ChipEvaluator:
 # ---------------------------------------------------------------------------
 
 class MultiWeekPlanner:
-    """Rolling 3-GW transfer planner with FT banking, fixture swings, and price awareness."""
+    """Rolling 5-GW transfer planner with FT banking, fixture swings, and price awareness."""
 
     def plan_transfers(
         self,
@@ -368,7 +368,7 @@ class MultiWeekPlanner:
         price_alerts: list[dict],
         chip_plan: dict | None = None,
     ) -> list[dict]:
-        """Plan transfers over next 3 GWs with forward simulation.
+        """Plan transfers over next 5 GWs with forward simulation.
 
         Returns list of {gw, transfers_in, transfers_out, ft_strategy, rationale,
         squad_ids, predicted_points}.
@@ -388,12 +388,12 @@ class MultiWeekPlanner:
                 fx_lookup[gw] = {}
             fx_lookup[gw][f["team_id"]] = f
 
-        # Take first 3 prediction GWs for planning
-        plan_gws = pred_gws[:3]
+        # Take first 5 prediction GWs for planning
+        plan_gws = pred_gws[:5]
 
-        # Reduce player pool to top ~150 by predicted points for efficiency
+        # Reduce player pool to top ~200 by predicted points for efficiency
         first_gw_df = future_predictions[plan_gws[0]]
-        top_pool_ids = set(first_gw_df.nlargest(150, "predicted_points")["player_id"].tolist())
+        top_pool_ids = set(first_gw_df.nlargest(200, "predicted_points")["player_id"].tolist())
         # Always include current squad
         top_pool_ids |= current_squad_ids
 
@@ -440,14 +440,23 @@ class MultiWeekPlanner:
         return best_path
 
     def _build_price_bonus(self, price_alerts: list[dict]) -> dict[int, float]:
-        """Convert price alerts to bonus points for likely risers."""
+        """Convert price alerts/predictions to bonus points for likely risers.
+
+        Supports both old format (net_transfers only) and new format (with probability).
+        """
         bonus = {}
         for alert in price_alerts:
             if alert.get("direction") == "rise":
-                # +0.3 pts per 0.1m expected rise (rough estimate from net transfers)
-                net = alert.get("net_transfers", 0)
-                estimated_rise = min(0.3, net / 100000)  # Cap at 0.3m
-                bonus[alert["player_id"]] = round(estimated_rise * 3.0, 2)
+                if "probability" in alert:
+                    # New probability-based formula
+                    prob = alert.get("probability", 0)
+                    change = abs(alert.get("estimated_change", 0.1))
+                    bonus[alert["player_id"]] = round(prob * change * 3.0, 2)
+                else:
+                    # Legacy: rough estimate from net transfers
+                    net = alert.get("net_transfers", 0)
+                    estimated_rise = min(0.3, net / 100000)
+                    bonus[alert["player_id"]] = round(estimated_rise * 3.0, 2)
         return bonus
 
     def _simulate_path(
@@ -455,7 +464,7 @@ class MultiWeekPlanner:
         total_budget, free_transfers, use_gw1,
         price_bonus, fx_lookup,
     ) -> list[dict] | None:
-        """Simulate a transfer path over 3 GWs given use_gw1 transfers in GW1."""
+        """Simulate a transfer path over 5 GWs given use_gw1 transfers in GW1."""
         path = []
         squad_ids = set(current_squad_ids)
         budget = total_budget
@@ -519,9 +528,11 @@ class MultiWeekPlanner:
                 # Solve transfer MILP
                 pool = gw_df.dropna(subset=["predicted_points"])
                 if "position" in pool.columns and "cost" in pool.columns:
+                    cap_col = "captain_score" if "captain_score" in pool.columns else None
                     result = solve_transfer_milp(
                         pool, squad_ids, "predicted_points",
                         budget=budget, max_transfers=use_now,
+                        captain_col=cap_col,
                     )
                     if result:
                         pts = result["starting_points"]
