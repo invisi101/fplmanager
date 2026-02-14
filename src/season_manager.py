@@ -823,6 +823,25 @@ class SeasonManager:
     # Action Plan
     # -------------------------------------------------------------------
 
+    def _get_next_fixture_map(self, bootstrap: dict, next_gw: int) -> dict:
+        """Map team_code -> opponent string like 'BOU (H)' for the given GW."""
+        fixtures = self._load_fixtures()
+        if not fixtures:
+            return {}
+        id_to_short = {t["id"]: t["short_name"] for t in bootstrap.get("teams", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
+        result = {}
+        for f in fixtures:
+            if f.get("event") != next_gw:
+                continue
+            for side, opp_side, tag in [("team_h", "team_a", "H"), ("team_a", "team_h", "A")]:
+                tid = f[side]
+                code = id_to_code.get(tid)
+                opp_name = id_to_short.get(f[opp_side], "?")
+                if code is not None and code not in result:
+                    result[code] = f"{opp_name} ({tag})"
+        return result
+
     def get_action_plan(self, manager_id: int) -> dict:
         """Build clear action items from the latest recommendation + strategic plan."""
         season = self.db.get_season(manager_id)
@@ -846,34 +865,80 @@ class SeasonManager:
         if not rec:
             return {"error": f"No recommendation for GW{next_gw}. Generate one first."}
 
+        # Build fixture map for opponent lookup on incoming players
+        fixture_map = self._get_next_fixture_map(bootstrap, next_gw)
+        elements_map = self._get_elements_map(bootstrap)
+        id_to_code, _, code_to_short = self._get_team_maps(bootstrap)
+
         steps = []
         priority = 1
+
+        def _player_dict(raw: dict, fixture_map: dict) -> dict:
+            """Extract structured player data for the frontend."""
+            pid = raw.get("player_id")
+            team_code = raw.get("team_code")
+            team = raw.get("team", "")
+
+            # Enrich from bootstrap if team info missing
+            if (not team_code or not team) and pid:
+                el = elements_map.get(pid, {})
+                if not team_code:
+                    team_code = id_to_code.get(el.get("team"))
+                if not team:
+                    team = code_to_short.get(team_code, "")
+
+            d = {
+                "player_id": pid,
+                "web_name": raw.get("web_name", "?"),
+                "position": raw.get("position", ""),
+                "team": team,
+                "team_code": team_code,
+                "cost": raw.get("cost"),
+            }
+            # Normalize predicted points field
+            pts = raw.get("predicted_next_gw_points") or raw.get("predicted_points")
+            d["predicted_next_gw_points"] = pts
+            # Opponent lookup from fixture map
+            d["opponent"] = fixture_map.get(team_code, "") if team_code else ""
+            return d
 
         # Transfers
         transfers = json.loads(rec.get("transfers_json") or "[]")
         has_pairs = transfers and isinstance(transfers[0], dict) and "out" in transfers[0]
         if has_pairs and transfers:
             for pair in transfers:
-                out_name = pair.get("out", {}).get("web_name", "?")
-                in_name = pair.get("in", {}).get("web_name", "?")
-                steps.append({
+                out_raw = pair.get("out", {})
+                in_raw = pair.get("in", {})
+                out_name = out_raw.get("web_name", "?")
+                in_name = in_raw.get("web_name", "?")
+                step = {
                     "action": "transfer",
                     "description": f"Transfer out {out_name}, bring in {in_name}",
                     "priority": priority,
-                })
+                    "player_out": _player_dict(out_raw, fixture_map),
+                    "player_in": _player_dict(in_raw, fixture_map),
+                }
+                steps.append(step)
                 priority += 1
         elif not has_pairs:
             # Check for old format or no transfers
             in_t = [t for t in transfers if t.get("direction") == "in"]
             out_t = [t for t in transfers if t.get("direction") == "out"]
             for i in range(max(len(in_t), len(out_t))):
-                out_name = out_t[i].get("web_name", "?") if i < len(out_t) else "?"
-                in_name = in_t[i].get("web_name", "?") if i < len(in_t) else "?"
-                steps.append({
+                out_raw = out_t[i] if i < len(out_t) else {}
+                in_raw = in_t[i] if i < len(in_t) else {}
+                out_name = out_raw.get("web_name", "?") if out_raw else "?"
+                in_name = in_raw.get("web_name", "?") if in_raw else "?"
+                step = {
                     "action": "transfer",
                     "description": f"Transfer out {out_name}, bring in {in_name}",
                     "priority": priority,
-                })
+                }
+                if out_raw:
+                    step["player_out"] = _player_dict(out_raw, fixture_map)
+                if in_raw:
+                    step["player_in"] = _player_dict(in_raw, fixture_map)
+                steps.append(step)
                 priority += 1
 
         if not steps:
@@ -886,11 +951,14 @@ class SeasonManager:
 
         # Captain
         captain_name = rec.get("captain_name")
+        captain_id = rec.get("captain_id")
         if captain_name:
             steps.append({
                 "action": "captain",
                 "description": f"Set captain to {captain_name}",
                 "priority": priority,
+                "captain_id": captain_id,
+                "captain_name": captain_name,
             })
             priority += 1
 

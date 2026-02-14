@@ -800,6 +800,30 @@
     width: 20px;
     text-align: center;
   }
+  .action-step-check {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--border);
+    border-radius: 4px;
+    flex-shrink: 0;
+    cursor: pointer;
+    position: relative;
+    margin-top: 1px;
+  }
+  .action-step-check:hover { border-color: var(--green); }
+  .action-step-check.checked {
+    background: var(--green);
+    border-color: var(--green);
+  }
+  .action-step-check.checked::after {
+    content: '\2713';
+    position: absolute;
+    top: -1px;
+    left: 2px;
+    font-size: 13px;
+    color: #000;
+    font-weight: 700;
+  }
 
   .outcome-card {
     background: var(--surface);
@@ -1101,14 +1125,14 @@
       <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="2" y1="12" x2="22" y2="12"/>
     </svg>
   </span>
-  <div class="tab active" data-view="predictions" onclick="switchTab(this)">🔮 Predictions</div>
+  <div class="tab active" data-view="myteam" onclick="switchTab(this)">🧸 My Team</div>
+  <div class="tab" data-view="predictions" onclick="switchTab(this)">🔮 Predictions</div>
   <div class="tab" data-view="bestteam" onclick="switchTab(this)">🏆 Best Team</div>
-  <div class="tab" data-view="myteam" onclick="switchTab(this)">🧸 My Team</div>
   <div class="tab" data-view="season" onclick="switchTab(this)">📅 Season</div>
 </div>
 
 <!-- Predictions Panel -->
-<div class="content" id="predictionsPanel">
+<div class="content" id="predictionsPanel" style="display:none">
   <div class="controls-row">
     <div class="pos-filters">
       <button class="pos-btn active" data-pos="ALL" onclick="filterPosition(this)">All</button>
@@ -1162,7 +1186,7 @@
 </div>
 
 <!-- My Team Panel -->
-<div class="content team-panel" id="myTeamPanel">
+<div class="content team-panel visible" id="myTeamPanel">
   <div class="team-controls">
     <label>Manager ID:</label>
     <input type="number" class="budget-input" id="managerIdInput" value="904686" style="width:120px">
@@ -1382,6 +1406,8 @@ let searchTimer = null;
 let taskRunning = false;
 let nextGW = null;
 let lastBestTeamResult = null;
+let lastActionPlanData = null;
+let lockedGWSquad = null;
 
 function getColumns() {
   const gwLabel = nextGW ? `GW${nextGW}` : 'GW';
@@ -2375,6 +2401,7 @@ function switchSeasonSection(btn) {
   if (el) el.classList.add('visible');
 
   // Load data for section
+  if (section === 'overview' && lockedGWSquad && lastMyTeamData) { renderSeasonTeamView(lastMyTeamData); }
   if (section === 'workflow') { loadActionPlan(); loadOutcomes(); updateWorkflowSteps(); }
   if (section === 'fixtures') loadFixtures();
   if (section === 'transfers') loadTransferHistory();
@@ -2397,6 +2424,7 @@ function loadSeasonDashboard() {
     .then(r => r.json())
     .then(d => {
       if (d.error || !d.squad) return;
+      lastMyTeamData = d;
       renderSeasonTeamView(d);
     });
 }
@@ -2448,9 +2476,19 @@ function renderSeasonTeamView(d) {
   const curGw = d.current_event || '?';
   const gwLabel = d.next_gw ? `GW${d.next_gw}` : 'Next GW';
 
-  // Total starter points this GW
-  const xiActual = starters.reduce((s, p) => s + (p.event_points || 0), 0);
-  const xiPred = starters.reduce((s, p) => s + (p.predicted_next_gw_points || 0), 0);
+  // Use locked squad for predicted side if available
+  const useLocked = lockedGWSquad && lockedGWSquad.squad;
+  const predSquad = useLocked ? lockedGWSquad.squad : d.squad;
+  const predStarters = predSquad.filter(p => p.starter);
+  const predBench = predSquad.filter(p => !p.starter);
+  const predLabel = useLocked ? `Locked-in GW${lockedGWSquad.gameweek}` : `Predicted ${gwLabel}`;
+
+  // Total points this GW (include bench if Bench Boost active)
+  const isBB = d.active_chip === 'bboost';
+  const actualScorers = isBB ? d.squad : starters;
+  const xiActual = actualScorers.reduce((s, p) => s + (p.event_points || 0), 0);
+  const predScorers = (useLocked && lockedGWSquad.benchBoost) ? predSquad : predStarters;
+  const xiPred = predScorers.reduce((s, p) => s + (p.predicted_next_gw_points || 0), 0);
 
   function teamCard(p, mode) {
     const isActual = mode === 'actual';
@@ -2504,35 +2542,46 @@ function renderSeasonTeamView(d) {
     </div>`;
   }
 
-  let html = `<div style="margin-bottom:20px">
-    <div class="compare-pitches">
-      <div class="compare-side">
-        <h3 style="color:var(--orange)">GW${curGw} Actual (${xiActual} pts)</h3>
-        ${buildPitch(starters, 'actual')}
-      </div>
-      <div class="compare-side">
-        <h3 style="color:var(--green)">Predicted ${gwLabel} (${xiPred.toFixed(1)} pts)</h3>
-        ${buildPitch(starters, 'predicted')}
-      </div>
-    </div>`;
-
-  // Bench
+  // Build bench HTML for each side
+  let actualBenchHtml = '';
   if (bench.length) {
-    html += `<div class="bench-area"><div class="bench-label">Bench</div>
+    actualBenchHtml = `<div class="bench-area"><div class="bench-label">Bench</div>
       <div class="bench-row">${bench.map(p => {
-        const actual = p.event_points != null ? Number(p.event_points).toFixed(0) : '-';
-        const pred = p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-';
+        const rawPts = p.event_points_raw != null ? Number(p.event_points_raw).toFixed(0) : (p.event_points != null ? Number(p.event_points).toFixed(0) : '-');
         return `<div class="bench-card">
           <div class="p-name">${p.web_name || '-'}</div>
           <div class="p-team">${p.team || ''} &middot; ${Number(p.cost).toFixed(1)}m</div>
-          <div style="display:flex;gap:8px;justify-content:center">
-            <div class="p-pts" style="color:var(--orange);font-size:13px">${actual}</div>
-            <div style="color:var(--text2);font-size:13px">/</div>
-            <div class="p-pts" style="font-size:13px">${pred}</div>
-          </div>
+          <div class="p-pts" style="color:var(--orange);font-size:13px">${rawPts}</div>
         </div>`;
       }).join('')}</div></div>`;
   }
+
+  let predBenchHtml = '';
+  if (predBench.length) {
+    predBenchHtml = `<div class="bench-area"><div class="bench-label">Bench</div>
+      <div class="bench-row">${predBench.map(p => {
+        const pred = p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-';
+        return `<div class="bench-card"${useLocked ? ' style="border:1px solid var(--green)"' : ''}>
+          <div class="p-name">${p.web_name || '-'}</div>
+          <div class="p-team">${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+          <div class="p-pts" style="font-size:13px">${pred}</div>
+        </div>`;
+      }).join('')}</div></div>`;
+  }
+
+  let html = `<div style="margin-bottom:20px">
+    <div class="compare-pitches">
+      <div class="compare-side">
+        <h3 style="color:var(--orange)">GW${curGw} Actual${isBB ? ' [BB]' : ''} (${xiActual} pts)</h3>
+        ${buildPitch(starters, 'actual')}
+        ${actualBenchHtml}
+      </div>
+      <div class="compare-side">
+        <h3 style="color:var(--green)">${predLabel} (${xiPred.toFixed(1)} pts)</h3>
+        ${buildPitch(predStarters, 'predicted')}
+        ${predBenchHtml}
+      </div>
+    </div>`;
 
   html += '</div>';
   container.innerHTML = html;
@@ -2768,7 +2817,14 @@ function loadActionPlan() {
         document.getElementById('actionPlanDisplay').innerHTML = '';
         return;
       }
+      lastActionPlanData = d;
       renderActionPlan(d);
+    });
+  // Also fetch my-team data for lock-in squad building
+  fetch(`/api/my-team?manager_id=${mid}`)
+    .then(r => r.json())
+    .then(d => {
+      if (!d.error && d.squad) lastMyTeamData = d;
     });
 }
 
@@ -2805,7 +2861,8 @@ function renderActionPlan(plan) {
   steps.forEach((step, i) => {
     const icon = actionIcons[step.action] || '&#x2022;';
     const color = actionColors[step.action] || 'var(--text2)';
-    html += `<div class="action-step">
+    html += `<div class="action-step" data-step-index="${i}">
+      <div class="action-step-check" onclick="toggleActionCheck(this)"></div>
       <div class="action-step-icon" style="color:${color}">${icon}</div>
       <div>${step.description}</div>
     </div>`;
@@ -2815,11 +2872,16 @@ function renderActionPlan(plan) {
     html += `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text2);line-height:1.5">${plan.rationale}</div>`;
   }
 
-  html += `<div style="margin-top:10px;display:flex;justify-content:flex-end">
+  html += `<div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px">
+    <button class="btn" onclick="lockInGWTeam()" id="lockInBtn" disabled style="font-size:11px;padding:4px 10px;opacity:0.5">Lock-in GW Team</button>
     <button class="btn" onclick="copyActionPlan()" style="font-size:11px;padding:4px 10px">Copy to Clipboard</button>
   </div>`;
   html += '</div>';
+  html += '<div id="lockedSquadDisplay"></div>';
   document.getElementById('actionPlanDisplay').innerHTML = html;
+
+  // Re-render locked squad if exists
+  if (lockedGWSquad) renderLockedSquadPitch(lockedGWSquad);
 }
 
 function copyActionPlan() {
@@ -2832,9 +2894,184 @@ function copyActionPlan() {
     lines.push(`${i + 1}. ${text}`);
   });
   navigator.clipboard.writeText(lines.join('\n')).then(() => {
-    const btn = card.querySelector('button');
+    const copyBtn = card.querySelectorAll('button');
+    const btn = copyBtn[copyBtn.length - 1];
     if (btn) { btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy to Clipboard', 1500); }
   });
+}
+
+function toggleActionCheck(el) {
+  el.classList.toggle('checked');
+  const btn = document.getElementById('lockInBtn');
+  if (!btn) return;
+  const anyChecked = document.querySelectorAll('.action-step-check.checked').length > 0;
+  btn.disabled = !anyChecked;
+  btn.style.opacity = anyChecked ? '1' : '0.5';
+}
+
+function lockInGWTeam() {
+  if (!lastMyTeamData || !lastMyTeamData.squad || !lastActionPlanData) {
+    alert('Import your squad and generate a recommendation first.');
+    return;
+  }
+  const squad = JSON.parse(JSON.stringify(lastMyTeamData.squad));
+  const steps = lastActionPlanData.steps || [];
+  const checkedEls = document.querySelectorAll('.action-step-check.checked');
+
+  const transferredInIds = new Set();
+
+  checkedEls.forEach(el => {
+    const stepDiv = el.closest('.action-step');
+    const idx = parseInt(stepDiv.dataset.stepIndex, 10);
+    const step = steps[idx];
+    if (!step) return;
+
+    if (step.action === 'transfer' && step.player_out && step.player_in) {
+      const outId = step.player_out.player_id;
+      const si = squad.findIndex(p => p.player_id === outId);
+      if (si !== -1) {
+        const old = squad[si];
+        squad[si] = {
+          player_id: step.player_in.player_id,
+          web_name: step.player_in.web_name,
+          position: step.player_in.position,
+          team: step.player_in.team,
+          team_code: step.player_in.team_code,
+          cost: step.player_in.cost,
+          predicted_next_gw_points: step.player_in.predicted_next_gw_points,
+          opponent: step.player_in.opponent || '',
+          starter: old.starter,
+          is_captain: old.is_captain,
+          is_vice_captain: old.is_vice_captain,
+          event_points: null,
+          status: 'a',
+        };
+        transferredInIds.add(step.player_in.player_id);
+      }
+    } else if (step.action === 'captain' && step.captain_id) {
+      squad.forEach(p => {
+        p.is_captain = (p.player_id === step.captain_id);
+      });
+    }
+  });
+
+  // Promote transferred-in bench players over weaker same-position starters
+  for (const pid of transferredInIds) {
+    const p = squad.find(q => q.player_id === pid);
+    if (!p || p.starter) continue;
+    const samePos = squad.filter(q => q.position === p.position && q.starter && !transferredInIds.has(q.player_id));
+    if (!samePos.length) continue;
+    samePos.sort((a, b) => (a.predicted_next_gw_points || 0) - (b.predicted_next_gw_points || 0));
+    const weakest = samePos[0];
+    if ((p.predicted_next_gw_points || 0) > (weakest.predicted_next_gw_points || 0)) {
+      weakest.starter = false;
+      p.starter = true;
+    }
+  }
+
+  // Ensure captain is always a starter
+  const cap = squad.find(p => p.is_captain);
+  if (cap && !cap.starter) {
+    const samePos = squad.filter(q => q.position === cap.position && q.starter);
+    if (samePos.length) {
+      samePos.sort((a, b) => (a.predicted_next_gw_points || 0) - (b.predicted_next_gw_points || 0));
+      samePos[0].starter = false;
+      cap.starter = true;
+    }
+  }
+
+  // Check if Bench Boost is checked
+  let benchBoost = false;
+  checkedEls.forEach(el => {
+    const stepDiv = el.closest('.action-step');
+    const idx = parseInt(stepDiv.dataset.stepIndex, 10);
+    const step = steps[idx];
+    if (step && step.action === 'chip' && step.description.includes('Bench Boost')) benchBoost = true;
+  });
+
+  const gw = lastActionPlanData.gameweek || '?';
+  const starters = squad.filter(p => p.starter);
+  const scoringPlayers = benchBoost ? squad : starters;
+  const totalPts = scoringPlayers.reduce((s, p) => s + (p.predicted_next_gw_points || 0), 0);
+  lockedGWSquad = { gameweek: gw, squad: squad, predicted_points: totalPts, benchBoost };
+  renderLockedSquadPitch(lockedGWSquad);
+
+  // Refresh Overview predicted pitch if visible
+  const overviewSection = document.getElementById('seasonOverview');
+  if (overviewSection && overviewSection.classList.contains('visible') && lastMyTeamData) {
+    renderSeasonTeamView(lastMyTeamData);
+  }
+}
+
+function renderLockedSquadPitch(data) {
+  const container = document.getElementById('lockedSquadDisplay');
+  if (!container) return;
+  const squad = data.squad;
+  const starters = squad.filter(p => p.starter);
+  const bench = squad.filter(p => !p.starter);
+  const totalPts = data.predicted_points || 0;
+
+  function card(p) {
+    const pts = p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-';
+    let badge = '';
+    let cardStyle = '';
+    if (p.is_captain) {
+      cardStyle = 'border:2px solid #ef4444;box-shadow:0 0 8px rgba(239,68,68,0.4)';
+      badge = ' <span class="captain-badge">(C)</span>';
+    } else if (p.is_vice_captain) {
+      badge = ' <span class="vc-badge">(V)</span>';
+    }
+    return `<div class="pitch-card" style="${cardStyle}">
+      <div class="p-name">${p.web_name || '-'}${badge}</div>
+      <div class="p-team">${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+      <div class="p-pts" style="color:var(--green)">${pts}</div>
+      ${p.opponent ? `<span style="font-size:10px;color:var(--text2)">${p.opponent}</span>` : ''}
+    </div>`;
+  }
+
+  const fwd = starters.filter(p => p.position === 'FWD');
+  const mid = starters.filter(p => p.position === 'MID');
+  const def_ = starters.filter(p => p.position === 'DEF');
+  const gkp = starters.filter(p => p.position === 'GKP');
+
+  let html = `<div class="action-plan-card" style="margin-top:12px">
+    <h4 style="display:flex;justify-content:space-between;align-items:center">
+      <span style="color:var(--green)">Locked-in GW${data.gameweek} Squad${data.benchBoost ? ' [BB]' : ''} (Predicted: ${totalPts.toFixed(1)} pts)</span>
+      <button class="btn" onclick="clearLockedSquad()" style="font-size:11px;padding:4px 10px">Clear</button>
+    </h4>
+    <div class="pitch">
+      <div class="pitch-bottom-box"></div>
+      <div class="pitch-row fwd">${fwd.map(p => card(p)).join('')}</div>
+      <div class="pitch-row mid">${mid.map(p => card(p)).join('')}</div>
+      <div class="pitch-row def">${def_.map(p => card(p)).join('')}</div>
+      <div class="pitch-row gkp">${gkp.map(p => card(p)).join('')}</div>
+    </div>`;
+
+  if (bench.length) {
+    html += `<div class="bench-area"><div class="bench-label">Bench</div>
+      <div class="bench-row">${bench.map(p => {
+        const pred = p.predicted_next_gw_points != null ? Number(p.predicted_next_gw_points).toFixed(1) : '-';
+        return `<div class="bench-card">
+          <div class="p-name">${p.web_name || '-'}</div>
+          <div class="p-team">${p.team || ''} &middot; ${p.cost != null ? Number(p.cost).toFixed(1) + 'm' : ''}</div>
+          <div class="p-pts" style="font-size:13px">${pred}</div>
+        </div>`;
+      }).join('')}</div></div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function clearLockedSquad() {
+  lockedGWSquad = null;
+  const container = document.getElementById('lockedSquadDisplay');
+  if (container) container.innerHTML = '';
+  // Refresh Overview predicted pitch if visible
+  const overviewSection = document.getElementById('seasonOverview');
+  if (overviewSection && overviewSection.classList.contains('visible') && lastMyTeamData) {
+    renderSeasonTeamView(lastMyTeamData);
+  }
 }
 
 // --- Outcomes ---
@@ -3880,11 +4117,12 @@ connectSSE();
 loadPredictions();
 loadModelInfo();
 
-// Restore saved manager ID
+// Restore saved manager ID and auto-import squad
 const savedManagerId = localStorage.getItem('fpl_manager_id');
 if (savedManagerId) {
   document.getElementById('managerIdInput').value = savedManagerId;
   document.getElementById('seasonManagerId').value = savedManagerId;
+  importMyTeam();
 }
 // --- Help Overlay ---
 function openHelp() { document.getElementById('helpOverlay').style.display = 'flex'; }
