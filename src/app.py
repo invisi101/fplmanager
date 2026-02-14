@@ -348,7 +348,7 @@ def api_refresh_data():
                 # Check plan health for all active seasons
                 db = SeasonDB()
                 conn = db._conn()
-                seasons = conn.execute("SELECT manager_id FROM season WHERE active=1").fetchall()
+                seasons = conn.execute("SELECT DISTINCT manager_id FROM season").fetchall()
                 conn.close()
                 for s in seasons:
                     mid = s["manager_id"]

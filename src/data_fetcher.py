@@ -76,10 +76,16 @@ def detect_current_season(bootstrap: dict | None = None) -> str:
     return f"{y}-{y+1}"
 
 
+EARLIEST_SEASON = "2024-2025"  # Earliest season available on the data source
+MAX_SEASONS = 2  # Train on current + previous season only
+
+
 def get_all_seasons(current: str) -> list[str]:
-    """Return all seasons to fetch, oldest first. Currently: 2 prior + current."""
-    start = int(current.split("-")[0])
-    return [f"{start-2}-{start-1}", f"{start-1}-{start}", current]
+    """Return seasons to fetch, oldest first. Capped at MAX_SEASONS, floored at EARLIEST_SEASON."""
+    current_start = int(current.split("-")[0])
+    earliest_start = int(EARLIEST_SEASON.split("-")[0])
+    first = max(earliest_start, current_start - MAX_SEASONS + 1)
+    return [f"{y}-{y+1}" for y in range(first, current_start + 1)]
 
 
 def get_previous_season(current: str) -> str:
@@ -159,9 +165,21 @@ def _detect_max_gw(season: str, force: bool = False) -> int:
 
 
 def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFrame]:
-    """Fetch data for any season, auto-detecting layout."""
+    """Fetch data for any season, auto-detecting layout. Returns empty dict if season doesn't exist."""
     layout = get_season_layout(season)
     data = {}
+
+    # Probe: try the first file to check if this season exists on the data source
+    if layout == LAYOUT_FLAT:
+        probe_path = list(FLAT_FILES.values())[0]
+    else:
+        probe_path = list(PER_GW_ROOT_FILES.values())[0]
+    probe_url = f"{GITHUB_BASE}/{season}/{probe_path}"
+    probe_cache = _cache_path(f"{season}_probe.csv")
+    try:
+        _fetch_csv(probe_url, probe_cache, force=force)
+    except requests.HTTPError:
+        return {}
 
     if layout == LAYOUT_FLAT:
         for key, path in FLAT_FILES.items():
@@ -221,7 +239,10 @@ def load_all_data(force: bool = False) -> dict:
     for season in seasons:
         print(f"Fetching {season} data...")
         try:
-            result[season] = fetch_season_data(season, force=force)
+            sdata = fetch_season_data(season, force=force)
+            if not sdata:
+                print(f"  {season}: no data available, skipping")
+            result[season] = sdata
         except Exception as e:
             print(f"  Skipping {season}: {e}")
             result[season] = {}
