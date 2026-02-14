@@ -100,6 +100,10 @@ class SeasonManager:
         ft = 1
         for i, gw_entry in enumerate(current):
             event = gw_entry.get("event")
+            if event in chip_events:
+                # WC/FH: FTs are preserved — chip transfers don't consume FTs
+                # and no accrual happens during chip weeks
+                continue
             transfers_made = gw_entry.get("event_transfers", 0)
             transfers_cost = gw_entry.get("event_transfers_cost", 0)
             paid = transfers_cost // 4 if transfers_cost > 0 else 0
@@ -110,8 +114,6 @@ class SeasonManager:
                 ft = max(ft, 0)
             else:
                 ft = min(ft + 1, 5)
-            if event in chip_events:
-                ft = 1
         return max(ft, 1)
 
     # -------------------------------------------------------------------

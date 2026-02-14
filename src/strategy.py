@@ -458,9 +458,9 @@ class MultiWeekPlanner:
 
             if gw_chip in ("wildcard", "freehit"):
                 # Chip GW: FT count irrelevant (full squad rebuild)
+                # FTs are preserved — chip week doesn't affect FT count
                 current.append(0)
-                next_ft = 1 if gw_chip == "freehit" else min(ft + 1, 5)
-                recurse(idx + 1, next_ft, current)
+                recurse(idx + 1, ft, current)
                 current.pop()
             else:
                 max_use = min(ft, max_per_gw)
@@ -566,14 +566,10 @@ class MultiWeekPlanner:
                         if gw_chip == "wildcard":
                             # WC permanently changes squad
                             squad_ids = new_squad_ids
-                            ft = min(ft + 1, 5)
-                        elif gw_chip == "freehit":
-                            # FH: squad reverts to original next GW
-                            # (squad_ids stays unchanged for subsequent GWs)
-                            # FPL resets FTs to 1 after Free Hit
-                            ft = 1
-                        else:
-                            ft = min(ft + 1, 5)
+                        # FH: squad reverts to original next GW
+                        # (squad_ids stays unchanged for subsequent GWs)
+                        # FTs preserved for both WC and FH — chip week
+                        # doesn't affect FT count
                     else:
                         # Solver failed, keep current squad
                         squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
@@ -588,7 +584,7 @@ class MultiWeekPlanner:
                             "squad_ids": list(squad_ids),
                             "chip": gw_chip,
                         })
-                        ft = min(ft + 1, 5)
+                        # FTs preserved for chip weeks (no accrual)
                 else:
                     return None
                 continue
