@@ -1,124 +1,105 @@
-# FPL Points Predictor
+# FPL Manager
 
-XGBoost-based Fantasy Premier League points predictor with a local web dashboard.
+Autonomous Fantasy Premier League manager powered by XGBoost predictions and MILP optimization. Plans transfers, captaincy, and chip strategy across a rolling 5-gameweek horizon.
 
----
-
-## Windows (Standalone .exe)
-
-No Python required. Download and run.
-
-1. Go to the [latest release](https://github.com/invisi101/fplxti/releases/latest)
-2. Download **`FPL-Predictor-Windows.zip`**
-3. Extract the zip to a folder (e.g. your Desktop)
-4. Double-click **`FPL Predictor.exe`**
-5. A console window will open and your browser will launch automatically
-
-To stop the app, close the console window.
+Built with Python, Flask, scipy MILP, and a single-file vanilla JS frontend.
 
 ---
 
-## macOS
+## What It Does
+
+- **Predicts** individual player points using position-specific XGBoost models (mean + quantile + decomposed sub-models), with 100+ engineered features per player per gameweek
+- **Optimizes** squad selection, transfers, and captaincy jointly via mixed-integer linear programming
+- **Plans ahead** with a 5-GW rolling transfer planner that considers FT banking, fixture swings, and price movements
+- **Evaluates chips** (Wildcard, Bench Boost, Triple Captain, Free Hit) across every remaining GW with DGW/BGW awareness and synergy detection
+- **Tracks your season** — records recommendations vs actual results, rank trajectory, budget evolution, and model accuracy over time
+- **Reacts** to injuries, fixture changes, and prediction shifts with auto-replan detection and alerts
+
+---
+
+## Setup
 
 ```bash
-mkdir -p ~/fpl
-git clone https://github.com/invisi101/fplxti.git ~/fpl/fpl-predictor
-cd ~/fpl/fpl-predictor
+git clone https://github.com/invisi101/fplmanager.git
+cd fplmanager
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m src.app
 ```
 
-Open http://127.0.0.1:9876 in your browser.
+Open http://127.0.0.1:9875 in your browser.
 
 ---
 
-## Linux
+## First Run
 
-```bash
-mkdir -p ~/fpl
-git clone https://github.com/invisi101/fplxti.git ~/fpl/fpl-predictor
-cd ~/fpl/fpl-predictor
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m src.app
-```
+1. **Get Latest Data** — downloads player stats, fixtures, and team data from the FPL API and GitHub historical CSVs
+2. **Train Models** — trains XGBoost models for all positions (takes a few minutes)
+3. Predictions appear automatically — you're ready to go
 
-Open http://127.0.0.1:9876 in your browser.
-
-### Desktop Launcher (Linux)
-
-```bash
-cp fpl-predictor.desktop ~/.local/share/applications/
-```
-
-Then search "FPL" in your app launcher.
+Retrain periodically as the season progresses.
 
 ---
 
-## Running for the First Time
-
-1. **Get Latest Data** — click this first to download player stats, fixtures, and team data from the FPL API
-2. **Train Models** — trains XGBoost prediction models for all positions (takes a few minutes). You need to do this before predictions will appear
-3. You're set — the Predictions tab will now show predicted points for every player
-
-Retrain models every few weeks to keep predictions fresh as the season progresses.
-
----
-
-## Using the App
-
-### Action Bar
-
-The buttons across the top control data and model operations. A status indicator shows when a task is running.
-
-- **Get Latest Data** — fetches the latest player stats, fixtures, and injury news. Do this weekly or before making transfer decisions
-- **Train Models** — trains XGBoost models for all positions and targets, plus quantile models for captain picks and decomposed sub-models. Generates new predictions
-- **Run Feature Selection** — analyses which stats best predict FPL points using four selection methods (Lasso, Random Forest, RFE, XGBoost). Optional — for curiosity or model tuning
-- **Model Importance** — extracts and charts feature importances from the trained XGBoost models
+## Features
 
 ### Predictions
 
-Sortable, searchable table of every player's predicted points. Filter by position (All / GKP / DEF / MID / FWD). Columns include cost, form, last GW points, total points, predicted next GW, predicted next 3 GWs, FDR (colour-coded fixture difficulty), home/away, FPL's own ep_next, and the next 3 opponents.
+Sortable, searchable table of every player's predicted points. Filter by position. Columns include cost, form, predicted next GW and 3 GW points, fixture difficulty, upcoming opponents, and captain scores.
 
 ### Best Team
 
-Build the optimal 15-player squad for a given budget using a MILP solver. Set your budget (default 100.0m), choose whether to optimise for next GW or next 3 GWs, and click **Pick Team**. The result is shown on an interactive pitch with the best XI and bench. The captain is automatically set to the highest-predicted player. Click **Lock In This Team** to save it for later comparison in GW Compare.
+MILP solver builds the optimal 15-player squad within budget, with joint captain optimization. Displayed on an interactive pitch visualization.
 
 ### My Team
 
-Import your actual FPL squad by entering your Manager ID and clicking **Import Squad**. Shows your team name, overall rank, and points. Displays your current squad on a pitch with actual and predicted points, plus injury/suspension indicators.
+Import your FPL squad by manager ID. Dual-pitch view showing actual GW points (with captain multiplier) alongside predicted next GW points. Shows squad value, bank, and free transfers.
 
-The transfer recommender finds optimal transfers: set the max number of transfers (auto-set to your free transfers), choose GW or 3GW optimisation, optionally enable Wildcard mode, and click **Find Transfers**. Shows each transfer (out/in) with predicted points gained, any points hit cost, and the net gain. The new squad is displayed with incoming players highlighted.
+**Transfer Recommender** — finds optimal transfers using the MILP solver. Set max transfers, choose 1GW or 3GW optimization, optionally enable Wildcard mode. Shows each transfer with predicted points gained, hit cost, and net gain.
 
-### Season
+### Season Manager
 
-Track your entire FPL season from any gameweek. Enter your Manager ID and click **Start Season** to backfill your full history from the FPL API.
+Track your entire FPL season from any gameweek:
 
-- **Overview** — Rank trajectory, points-per-GW, and budget evolution charts. Summary cards for rank, points, team value, bank, and free transfers. Current squad displayed with player badges.
-- **Weekly Workflow** — Generate transfer/captain/chip recommendations using the MILP solver. Includes a 2-week lookahead comparing bank-vs-use strategies for free transfers. After the gameweek, record actual results to compare against recommendations.
-- **Fixtures** — FDR-coloured grid showing upcoming opponents for all 20 teams. Double and blank gameweeks highlighted automatically.
-- **Transfer History** — Complete log of all transfers with cost, hit points, and whether the recommendation was followed.
-- **Chips** — Tracks which chips you've used and when. Estimates the point value of each remaining chip.
-- **Prices** — Daily price snapshots for squad players. Alerts for players likely to rise or fall based on transfer volume.
+- **Overview** — rank trajectory, points-per-GW, budget evolution, and model accuracy charts
+- **Strategy** — 5-GW transfer timeline with captain plan, chip schedule with synergy annotations, chip heatmap, and plan changelog. Auto-replan alerts when injuries or fixture changes invalidate the current plan
+- **Weekly Workflow** — generate transfer/captain/chip recommendations, then record actual results after the gameweek
+- **Fixtures** — FDR-colored grid for all 20 teams with DGW/BGW detection
+- **Prices** — ownership-based price change predictions with probability scores and price history charts
+- **Transfer History** — complete log with cost, hits, and recommendation adherence
+- **Chips** — tracks usage and estimates remaining chip value
 
 ### Feature Insights
 
-View model training status (date, feature count per position), feature importance charts from feature selection, and XGBoost model importance charts. Includes detailed text reports for both.
+Feature importance charts from XGBoost models. Model training status and accuracy metrics.
 
-### Backtest & GW Compare
+### Backtest
 
-Available from the action bar. Backtest tests model accuracy across historical gameweeks. GW Compare lets you compare a locked-in team against the best possible team for a past gameweek.
+Walk-forward historical accuracy testing with per-position breakdown and bootstrap confidence intervals.
 
 ---
 
-## CLI (Advanced)
+## CLI
 
 ```bash
-python -m src.predict                          # predictions only
-python -m src.predict --train --tune           # train models then predict
-python -m src.predict --feature-selection      # run feature selection first
-python -m src.predict --force-fetch            # force re-fetch all data
+python -m src.predict                      # predictions only
+python -m src.predict --train --tune       # train models then predict
+python -m src.predict --feature-selection  # run feature selection
+python -m src.predict --force-fetch        # force re-fetch all data
 ```
+
+---
+
+## Architecture
+
+Three-layer system: **Data → Features/Models → Strategy/Solver**, backed by SQLite and served via Flask.
+
+| Layer | Components |
+|-------|-----------|
+| Data | FPL API + GitHub CSVs, cached (30m / 6h), 100+ features per player per GW |
+| Models | 4 position-specific mean models, 2 quantile (Q80) for captaincy, ~20 decomposed sub-models |
+| Strategy | ChipEvaluator, MultiWeekPlanner (5-GW), CaptainPlanner, PlanSynthesizer, reactive re-planning |
+| Solver | scipy MILP with joint captain optimization (3n decision variables) |
+| Storage | SQLite with 8 tables for season tracking, plans, outcomes, price history |
+| Frontend | Single HTML file, vanilla JS, dark theme, canvas charts, SSE for live progress |
