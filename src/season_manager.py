@@ -662,15 +662,19 @@ class SeasonManager:
             total_budget, history,
         )
 
-        # Use strategic chip schedule for suggestion if available
+        # Use strategic chip schedule for suggestion if available.
+        # If a strategic plan exists, trust its chip timing — only suggest a
+        # chip if the plan schedules one for THIS GW.  The single-GW fallback
+        # should only fire when no strategic plan was generated at all.
         chip_suggestion = None
-        if strategic_plan and strategic_plan.get("chip_schedule"):
+        has_strategic_plan = strategic_plan and strategic_plan.get("chip_schedule")
+        if has_strategic_plan:
             for chip_name, chip_gw in strategic_plan["chip_schedule"].items():
                 if chip_gw == next_gw:
                     chip_suggestion = chip_name
                     break
 
-        if chip_suggestion is None and chip_values:
+        if chip_suggestion is None and not has_strategic_plan and chip_values:
             best_chip = max(chip_values.items(), key=lambda x: x[1])
             if best_chip[1] > 5.0:
                 chip_suggestion = best_chip[0]
