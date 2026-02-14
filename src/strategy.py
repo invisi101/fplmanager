@@ -405,40 +405,25 @@ class MultiWeekPlanner:
                 gw_df = future_predictions[gw]
                 filtered_preds[gw] = gw_df[gw_df["player_id"].isin(top_pool_ids)].copy()
 
-        # Check if WC/FH is planned for GW1 — bypass FT loop, solve full squad
-        gw1_chip = None
-        if chip_plan and plan_gws[0] in chip_plan.get("chip_gws", {}):
-            gw1_chip = chip_plan["chip_gws"][plan_gws[0]]
+        # Generate all valid FT allocation sequences across the horizon
+        ft_plans = self._generate_ft_plans(plan_gws, free_transfers, chip_plan)
 
         best_path = None
         best_total = -float("inf")
 
-        if gw1_chip in ("freehit", "wildcard"):
-            # WC/FH: single simulation with full squad from scratch (use_gw1=15)
+        for ft_plan in ft_plans:
             path = self._simulate_path(
                 plan_gws, filtered_preds, current_squad_ids,
-                total_budget, free_transfers, 15,
+                total_budget, free_transfers, ft_plan,
                 price_bonus, fx_lookup, chip_plan=chip_plan,
             )
-            if path is not None:
-                best_total = sum(step["predicted_points"] for step in path)
-                best_path = path
-        else:
-            # Forward simulation: try each FT allocation for GW+1
-            max_use = min(free_transfers, 3)
-            for use_gw1 in range(0, max_use + 1):
-                path = self._simulate_path(
-                    plan_gws, filtered_preds, current_squad_ids,
-                    total_budget, free_transfers, use_gw1,
-                    price_bonus, fx_lookup, chip_plan=chip_plan,
-                )
-                if path is None:
-                    continue
+            if path is None:
+                continue
 
-                total_pts = sum(step["predicted_points"] for step in path)
-                if total_pts > best_total:
-                    best_total = total_pts
-                    best_path = path
+            total_pts = sum(step["predicted_points"] for step in path)
+            if total_pts > best_total:
+                best_total = total_pts
+                best_path = path
 
         if best_path is None:
             return []
@@ -448,6 +433,45 @@ class MultiWeekPlanner:
             step["rationale"] = self._build_rationale(step, free_transfers)
 
         return best_path
+
+    def _generate_ft_plans(
+        self, plan_gws: list[int], initial_ft: int, chip_plan: dict | None = None,
+    ) -> list[list[int]]:
+        """Generate all valid FT allocation sequences for the planning horizon.
+
+        Each plan is a list of ints (one per GW) specifying how many FTs to use.
+        Chip GWs are fixed at 0 (chip logic handles them separately).
+        Normal GWs try 0 through min(ft, 3) to balance saving vs spending FTs.
+        """
+        plans: list[list[int]] = []
+        max_per_gw = 3  # Cap per-GW transfers to keep search tractable
+
+        def recurse(idx: int, ft: int, current: list[int]):
+            if idx >= len(plan_gws):
+                plans.append(list(current))
+                return
+
+            gw = plan_gws[idx]
+            gw_chip = None
+            if chip_plan:
+                gw_chip = chip_plan.get("chip_gws", {}).get(gw)
+
+            if gw_chip in ("wildcard", "freehit"):
+                # Chip GW: FT count irrelevant (full squad rebuild)
+                current.append(0)
+                next_ft = 1 if gw_chip == "freehit" else min(ft + 1, 5)
+                recurse(idx + 1, next_ft, current)
+                current.pop()
+            else:
+                max_use = min(ft, max_per_gw)
+                for use in range(0, max_use + 1):
+                    current.append(use)
+                    next_ft = max(min(ft - use + 1, 5), 1)
+                    recurse(idx + 1, next_ft, current)
+                    current.pop()
+
+        recurse(0, initial_ft, [])
+        return plans
 
     def _build_price_bonus(self, price_alerts: list[dict]) -> dict[int, float]:
         """Convert price alerts/predictions to bonus points for likely risers.
@@ -471,10 +495,10 @@ class MultiWeekPlanner:
 
     def _simulate_path(
         self, plan_gws, filtered_preds, current_squad_ids,
-        total_budget, free_transfers, use_gw1,
+        total_budget, free_transfers, ft_plan,
         price_bonus, fx_lookup, chip_plan=None,
     ) -> list[dict] | None:
-        """Simulate a transfer path over 5 GWs given use_gw1 transfers in GW1."""
+        """Simulate a transfer path over 5 GWs given a per-GW FT allocation plan."""
         path = []
         squad_ids = set(current_squad_ids)
         budget = total_budget
@@ -569,11 +593,8 @@ class MultiWeekPlanner:
                     return None
                 continue
 
-            if i == 0:
-                use_now = use_gw1
-            else:
-                # For GW2+: use available FTs (greedy — use all)
-                use_now = min(ft, 2)
+            # Use the pre-planned FT allocation, clamped to actual available FTs
+            use_now = min(ft_plan[i], ft)
 
             if use_now == 0:
                 # No transfers: keep current squad

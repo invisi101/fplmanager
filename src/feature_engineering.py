@@ -40,8 +40,9 @@ def _build_player_rolling_features(pms: pd.DataFrame) -> pd.DataFrame:
 
     available_cols = [c for c in PLAYER_ROLLING_COLS if c in pms.columns]
 
-    # Aggregate per player per gameweek (handles double GWs)
-    agg = pms.groupby(["player_id", "gameweek"])[available_cols].mean().reset_index()
+    # Aggregate per player per gameweek (handles double GWs — sum so DGW
+    # output counts fully in rolling windows rather than being averaged down)
+    agg = pms.groupby(["player_id", "gameweek"])[available_cols].sum().reset_index()
     agg = agg.sort_values(["player_id", "gameweek"])
 
     # Compute rolling averages (shift by 1 to avoid leakage — only past data)
@@ -73,8 +74,8 @@ def _build_ewm_features(pms: pd.DataFrame) -> pd.DataFrame:
     if not available:
         return pd.DataFrame(columns=["player_id", "gameweek"])
 
-    # Aggregate per player per GW (handles DGW)
-    agg = pms.groupby(["player_id", "gameweek"])[available].mean().reset_index()
+    # Aggregate per player per GW (handles DGW — sum for full GW output)
+    agg = pms.groupby(["player_id", "gameweek"])[available].sum().reset_index()
     agg = agg.sort_values(["player_id", "gameweek"])
 
     result = agg[["player_id", "gameweek"]].copy()
@@ -106,8 +107,8 @@ def _build_upside_features(pms: pd.DataFrame) -> pd.DataFrame:
     for col in available:
         pms[col] = pd.to_numeric(pms[col], errors="coerce").fillna(0)
 
-    # Aggregate per player per GW (handles DGW)
-    agg = pms.groupby(["player_id", "gameweek"])[available].mean().reset_index()
+    # Aggregate per player per GW (handles DGW — sum for full GW output)
+    agg = pms.groupby(["player_id", "gameweek"])[available].sum().reset_index()
     agg = agg.sort_values(["player_id", "gameweek"])
 
     result = agg[["player_id", "gameweek"]].copy()
@@ -215,8 +216,8 @@ def _build_opponent_rolling_features(team_stats: pd.DataFrame) -> pd.DataFrame:
         "opponent_shots_on_target",
     ]
 
-    # Aggregate per team per GW (in case of double GWs)
-    agg = team_stats.groupby(["team_code", "gameweek"])[roll_cols].mean().reset_index()
+    # Aggregate per team per GW (handles DGW — sum for full GW output)
+    agg = team_stats.groupby(["team_code", "gameweek"])[roll_cols].sum().reset_index()
     agg = agg.sort_values(["team_code", "gameweek"])
 
     result_frames = [agg[["team_code", "gameweek"]]]
@@ -241,7 +242,7 @@ def _build_own_team_rolling_features(team_stats: pd.DataFrame) -> pd.DataFrame:
     own_cols = ["goals_scored", "xg", "big_chances", "shots_on_target", "clean_sheet"]
     available = [c for c in own_cols if c in team_stats.columns]
 
-    agg = team_stats.groupby(["team_code", "gameweek"])[available].mean().reset_index()
+    agg = team_stats.groupby(["team_code", "gameweek"])[available].sum().reset_index()
     agg = agg.sort_values(["team_code", "gameweek"])
 
     result_frames = [agg[["team_code", "gameweek"]]]
@@ -1132,8 +1133,13 @@ def build_features(data: dict) -> pd.DataFrame:
             df = df.merge(own_team_rolling, on=["team_code", "gameweek"], how="left")
 
         # Add rest days / fixture congestion
+        # Shift gameweek by -1: rest_days at GW N = rest before GW N, but the
+        # feature row at GW N predicts GW N+1, so we need rest before GW N+1.
+        # Shifting maps rest_days(GW N+1) onto feature row(GW N).
         if not rest_days.empty:
-            df = df.merge(rest_days, on=["team_code", "gameweek"], how="left")
+            rest_shifted = rest_days.copy()
+            rest_shifted["gameweek"] = rest_shifted["gameweek"] - 1
+            df = df.merge(rest_shifted, on=["team_code", "gameweek"], how="left")
             df["days_rest"] = df["days_rest"].fillna(7.0)
             df["fixture_congestion"] = df["fixture_congestion"].fillna(1.0 / 7.0)
 
@@ -1252,6 +1258,15 @@ def build_features(data: dict) -> pd.DataFrame:
             """Forward-fill across seasons with per-GW decay on carried values."""
             group_df = group_df.sort_values([group_col, "season", "gameweek"])
 
+            # Build a monotonically increasing GW counter across seasons
+            # so that distance is always positive (raw gameweek resets each season)
+            season_order = {s: i for i, s in enumerate(
+                sorted(group_df["season"].unique())
+            )}
+            group_df["_global_gw"] = (
+                group_df["season"].map(season_order) * 38 + group_df["gameweek"]
+            )
+
             for col in cols:
                 filled = group_df.groupby(group_col)[col].ffill()
                 # Identify rows where the value was NaN but got filled (carry-over)
@@ -1260,21 +1275,18 @@ def build_features(data: dict) -> pd.DataFrame:
                 carried = was_nan & is_filled
 
                 if carried.any():
-                    # Count consecutive NaN-then-filled rows per group
-                    # to compute decay distance
-                    gw_of_last_real = group_df[col].copy()
-                    gw_of_last_real[group_df[col].isna()] = np.nan
-                    # For each row, get the gameweek of the last real (non-NaN) value
-                    last_real_gw = group_df.groupby(group_col)["gameweek"].transform(
+                    # For each row, get the global_gw of the last real (non-NaN) value
+                    last_real_gw = group_df.groupby(group_col)["_global_gw"].transform(
                         lambda s: s.where(group_df.loc[s.index, col].notna()).ffill()
                     )
-                    distance = group_df["gameweek"] - last_real_gw
+                    distance = group_df["_global_gw"] - last_real_gw
                     decay = CROSS_SEASON_DECAY ** distance.clip(lower=0)
                     # Only apply decay to carried-over values, keep real values intact
                     group_df[col] = np.where(carried, filled * decay, filled)
                 else:
                     group_df[col] = filled
 
+            group_df = group_df.drop(columns=["_global_gw"])
             return group_df
 
         combined = combined.sort_values(["player_id", "season", "gameweek"])
