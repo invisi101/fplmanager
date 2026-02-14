@@ -319,11 +319,11 @@ def _build_opponent_history_features(pms: pd.DataFrame, matches: pd.DataFrame,
     # consistent with all other rolling features in the file.
     pm["vs_opponent_xg_avg"] = (
         pm.groupby(["player_id", "opponent_code"])["xg"]
-        .transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
+        .transform(lambda s: s.expanding(min_periods=1).mean().shift(1))
     )
     pm["vs_opponent_goals_avg"] = (
         pm.groupby(["player_id", "opponent_code"])["goals"]
-        .transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
+        .transform(lambda s: s.expanding(min_periods=1).mean().shift(1))
     )
     # Total matches played against this opponent (excluding current)
     pm["vs_opponent_matches"] = (
@@ -391,7 +391,7 @@ def _build_home_away_form(pms: pd.DataFrame, matches: pd.DataFrame,
     pm = pm.dropna(subset=["is_home_venue"])
 
     # Aggregate per player per GW per venue
-    agg = pm.groupby(["player_id", "gameweek", "is_home_venue"])["xg"].mean().reset_index()
+    agg = pm.groupby(["player_id", "gameweek", "is_home_venue"])["xg"].sum().reset_index()
     agg = agg.sort_values(["player_id", "gameweek"])
 
     # Compute rolling xG form for home games
@@ -1444,6 +1444,9 @@ def get_feature_columns(df: pd.DataFrame) -> list[str]:
         "player_id", "gameweek", "season", "team_code", "opponent_code",
         "position", "position_clean", "next_gw_points", "next_3gw_points",
         "event_points", "web_name", "cumulative_minutes", "ep_next",
+        # Decomposed targets (future data — must not be used as features)
+        "next_gw_minutes", "next_gw_goals", "next_gw_assists", "next_gw_cs",
+        "next_gw_bonus", "next_gw_goals_conceded", "next_gw_saves",
     }
     # Also exclude set piece order raw columns (we use the binary flag)
     exclude.update({"penalties_order", "corners_order", "freekicks_order",

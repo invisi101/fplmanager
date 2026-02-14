@@ -55,20 +55,21 @@ def get_season_layout(season: str) -> str:
 
 def detect_current_season(bootstrap: dict | None = None) -> str:
     """Detect the current FPL season from bootstrap GW1 deadline_time, or fallback to date."""
+    if bootstrap is None:
+        # Try cached bootstrap (only when no bootstrap provided, to avoid recursion)
+        cache = CACHE_DIR / "fpl_api_bootstrap.json"
+        if cache.exists():
+            try:
+                bootstrap = json.loads(cache.read_text(encoding="utf-8"))
+            except Exception:
+                pass
     if bootstrap:
         events = bootstrap.get("events", [])
         if events:
             deadline = events[0].get("deadline_time", "")
-            if deadline[:4].isdigit():
+            if len(deadline) >= 4 and deadline[:4].isdigit():
                 y = int(deadline[:4])
                 return f"{y}-{y+1}"
-    # Try cached bootstrap
-    cache = CACHE_DIR / "fpl_api_bootstrap.json"
-    if cache.exists():
-        try:
-            return detect_current_season(json.loads(cache.read_text(encoding="utf-8")))
-        except Exception:
-            pass
     # Date fallback
     from datetime import datetime
     now = datetime.now()
@@ -167,7 +168,7 @@ def _detect_max_gw(season: str, force: bool = False) -> int:
     """Detect the latest available gameweek for a per-GW layout season."""
     cache_file = _cache_path(f"{season}_playerstats.csv")
     url = f"{GITHUB_BASE}/{season}/playerstats.csv"
-    df = _fetch_csv(url, cache_file, force=True)
+    df = _fetch_csv(url, cache_file, force=force)
     return int(df["gw"].max())
 
 
@@ -197,6 +198,10 @@ def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFram
             except requests.HTTPError as e:
                 print(f"  Warning: could not fetch {season}/{key}: {e}")
     else:
+        # Detect max GW first (also caches playerstats.csv)
+        max_gw = _detect_max_gw(season, force=force)
+        print(f"  {season}: detected {max_gw} gameweeks")
+
         for key, path in PER_GW_ROOT_FILES.items():
             url = f"{GITHUB_BASE}/{season}/{path}"
             cache_file = _cache_path(f"{season}_{key}.csv")
@@ -204,9 +209,6 @@ def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFram
                 data[key] = _fetch_csv(url, cache_file, force=force)
             except requests.HTTPError as e:
                 print(f"  Warning: could not fetch {season}/{key}: {e}")
-
-        max_gw = _detect_max_gw(season, force=force)
-        print(f"  {season}: detected {max_gw} gameweeks")
 
         for filename in PER_GW_GW_FILES:
             key = filename.replace(".csv", "")

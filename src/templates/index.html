@@ -6,7 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800&display=swap" rel="stylesheet">
-<title>FPL Gaffer Brain</title>
+<title>FPL Gaffer - the brain</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -1087,7 +1087,7 @@
         </linearGradient>
       </defs>
     </svg>
-    <h1>FPL Gaffer Brain</h1>
+    <h1>FPL Gaffer - the brain</h1>
     <button class="help-btn" onclick="openHelp()" title="How to use">?</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px">
@@ -1598,11 +1598,17 @@ function renderTable() {
           td.innerHTML = `<span class="pos-tag ${val || ''}">${val || '-'}</span>`;
           break;
         case 'fdr':
-          const fdrVal = Math.round(val || 3);
-          td.innerHTML = `<span class="fdr-cell fdr-${fdrVal}">${val != null ? val : '-'}</span>`;
+          if (val != null) {
+            const fdrVal = Math.round(val);
+            td.innerHTML = `<span class="fdr-cell fdr-${fdrVal}">${val}</span>`;
+          } else {
+            td.textContent = '-';
+          }
           break;
         case 'home':
-          if (val == 1 || val === true) {
+          if (val == null) {
+            td.textContent = '-';
+          } else if (val == 1 || val === true) {
             td.innerHTML = '<span class="home-badge home">H</span>';
           } else {
             td.innerHTML = '<span class="home-badge away">A</span>';
@@ -2576,14 +2582,15 @@ function drawLineChart(canvasId, data, xKey, yKey, opts = {}) {
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
   ctx.beginPath();
+  let moved = false;
   data.forEach((d, i) => {
-    if (d[yKey] == null) return;
+    if (d[yKey] == null) { moved = false; return; }
     const x = pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
     const norm = opts.invert
       ? (d[yKey] - yMin) / (yMax - yMin)
       : 1 - (d[yKey] - yMin) / (yMax - yMin);
     const y = pad.top + norm * chartH;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    if (!moved) { ctx.moveTo(x, y); moved = true; } else ctx.lineTo(x, y);
   });
   ctx.stroke();
 
@@ -2686,20 +2693,22 @@ function drawDualLineChart(canvasId, data, xKey, y1Key, y2Key, opts = {}) {
   // Line 1 (predicted)
   const c1 = opts.color1 || '#6c63ff';
   ctx.strokeStyle = c1; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.beginPath();
+  let m1 = false;
   data.forEach((d, i) => {
-    if (d[y1Key] == null) return;
+    if (d[y1Key] == null) { m1 = false; return; }
     const x = pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
     const y = pad.top + (1 - (d[y1Key] - yMin) / (yMax - yMin)) * chartH;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    if (!m1) { ctx.moveTo(x, y); m1 = true; } else ctx.lineTo(x, y);
   }); ctx.stroke();
   // Line 2 (actual)
   const c2 = opts.color2 || '#2dd4a0';
   ctx.strokeStyle = c2; ctx.lineWidth = 2; ctx.beginPath();
+  let m2 = false;
   data.forEach((d, i) => {
-    if (d[y2Key] == null) return;
+    if (d[y2Key] == null) { m2 = false; return; }
     const x = pad.left + (i / Math.max(data.length - 1, 1)) * chartW;
     const y = pad.top + (1 - (d[y2Key] - yMin) / (yMax - yMin)) * chartH;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    if (!m2) { ctx.moveTo(x, y); m2 = true; } else ctx.lineTo(x, y);
   }); ctx.stroke();
   // X-axis
   ctx.fillStyle = '#8e91a4'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
@@ -4167,7 +4176,7 @@ function closeHelp() { document.getElementById('helpOverlay').style.display = 'n
 <div id="helpOverlay" class="help-overlay" style="display:none" onclick="if(event.target===this)closeHelp()">
   <div class="help-content">
     <div class="help-header">
-      <h2>How to Use FPL Gaffer Brain</h2>
+      <h2>How to Use FPL Gaffer - the brain</h2>
       <button class="help-close" onclick="closeHelp()">&times;</button>
     </div>
     <div class="help-body">

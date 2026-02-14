@@ -542,7 +542,7 @@ def train_quantile_model(
         raise ImportError("xgboost is required. Install with: pip install xgboost")
 
     if feature_cols is None:
-        feature_cols = DEFAULT_FEATURES.get(position, DEFAULT_FEATURES["MID"])
+        feature_cols = get_features_for_position(position)
 
     pos_df, available_feats = _prepare_position_data(df, position, target, feature_cols)
 
@@ -555,6 +555,13 @@ def train_quantile_model(
 
     # Season-based sample weights: graduated decay
     pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
+
+    # Sort by time for temporal ordering (required for TimeSeriesSplit)
+    season_order = sorted(pos_df["season"].unique())
+    season_map = {s: i for i, s in enumerate(season_order)}
+    pos_df = pos_df.copy()
+    pos_df["_seq_gw"] = pos_df["season"].map(season_map) * 100 + pos_df["gameweek"]
+    pos_df = pos_df.sort_values("_seq_gw")
 
     # Walk-forward validation
     maes = []
@@ -587,13 +594,7 @@ def train_quantile_model(
     print(f"    Walk-forward MAE: {walk_forward_mae:.3f} (over {n_splits} splits)")
     print(f"    Calibration: {avg_calibration:.1%} of actuals below q{int(quantile_alpha*100)} prediction (target: {quantile_alpha:.0%})")
 
-    # Train final model on all data
-    pos_df = pos_df.copy()
-    season_order = sorted(pos_df["season"].unique())
-    season_map = {s: i for i, s in enumerate(season_order)}
-    pos_df["_seq_gw"] = pos_df["season"].map(season_map) * 100 + pos_df["gameweek"]
-    pos_df = pos_df.sort_values("_seq_gw")
-
+    # Train final model on all data (pos_df already sorted with _seq_gw)
     X_all = pos_df[available_feats].values
     y_all = pos_df[target].values
     w_all = pos_df["_sample_weight"].values
@@ -778,6 +779,13 @@ def train_sub_model(
 
     pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
 
+    # Sort by time for temporal ordering (required for TimeSeriesSplit)
+    season_order = sorted(pos_df["season"].unique())
+    season_map = {s: i for i, s in enumerate(season_order)}
+    pos_df = pos_df.copy()
+    pos_df["_seq_gw"] = pos_df["season"].map(season_map) * 100 + pos_df["gameweek"]
+    pos_df = pos_df.sort_values("_seq_gw")
+
     X_all = pos_df[available_feats].values
     y_all = pos_df[target].values
     w_all = pos_df["_sample_weight"].values
@@ -834,10 +842,7 @@ def train_sub_model(
     avg_spearman = np.mean(spearmans) if spearmans else float("nan")
     print(f"    Walk-forward MAE: {wf_mae:.4f}, Spearman: {avg_spearman:.3f} ({n_splits} splits)")
 
-    # Holdout: last 3 sequential GWs
-    season_order = sorted(pos_df["season"].unique())
-    season_map = {s: i for i, s in enumerate(season_order)}
-    pos_df["_seq_gw"] = pos_df["season"].map(season_map) * 100 + pos_df["gameweek"]
+    # Holdout: last 3 sequential GWs (pos_df already sorted with _seq_gw)
     seq_gws = sorted(pos_df["_seq_gw"].unique())
     holdout_gws = set(seq_gws[-3:])
     ho_mask = pos_df["_seq_gw"].isin(holdout_gws)

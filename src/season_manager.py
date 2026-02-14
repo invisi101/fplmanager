@@ -103,7 +103,8 @@ class SeasonManager:
             event = gw_entry.get("event")
             if event in chip_events:
                 # WC/FH: FTs are preserved — chip transfers don't consume FTs
-                # and no accrual happens during chip weeks
+                # but normal +1 FT accrual still happens
+                ft = min(ft + 1, 5)
                 continue
             transfers_made = gw_entry.get("event_transfers", 0)
             transfers_cost = gw_entry.get("event_transfers_cost", 0)
@@ -327,6 +328,11 @@ class SeasonManager:
         # Get current squad
         entry = fetch_manager_entry(manager_id)
         current_event = entry.get("current_event")
+        if not current_event:
+            return {
+                "error": f"No GWs played yet (next GW is {next_gw}). "
+                "Use pre-season plan for initial squad selection.",
+            }
         picks_data = fetch_manager_picks(manager_id, current_event)
         history = fetch_manager_history(manager_id)
         free_transfers = self._calculate_free_transfers(history)
@@ -368,11 +374,16 @@ class SeasonManager:
         for _, row in pred_df.iterrows():
             pred_map[row.get("player_id")] = row.to_dict()
 
-        # Current XI points
+        # Current XI points (include captain bonus to match FPL actual_points scale)
         current_starters = [p for p in current_squad if p["starter"]]
         current_xi_points = round(
             sum(pred_map.get(p["player_id"], {}).get(target_col, 0) or 0 for p in current_starters), 2
         )
+        # Add captain bonus (captain doubles their points)
+        current_captain = next((p for p in current_squad if p.get("is_captain")), None)
+        if current_captain:
+            cap_pred = pred_map.get(current_captain["player_id"], {}).get(target_col, 0) or 0
+            current_xi_points = round(current_xi_points + cap_pred, 2)
 
         # =====================================================================
         # STRATEGIC PLANNING: Multi-GW predictions + chip heatmap + transfer plan
@@ -532,6 +543,13 @@ class SeasonManager:
             # WC/FH GW: full squad from scratch
             gw1 = multi_week_plan[0]
             predicted_points = gw1.get("predicted_points", current_xi_points)
+            # Mark captain on squad players from solver result
+            solver_cap_id = None
+            if strategic_plan and strategic_plan.get("timeline"):
+                solver_cap_id = strategic_plan["timeline"][0].get("captain_id")
+            for p in gw1["new_squad"]:
+                p["is_captain"] = (p.get("player_id") == solver_cap_id)
+                p["is_vice_captain"] = False
             new_squad_json = json.dumps(scrub_nan(gw1["new_squad"]))
             # No transfer pairs for WC/FH — the full squad is the recommendation
         elif multi_week_plan and multi_week_plan[0].get("transfers_in"):
@@ -582,7 +600,11 @@ class SeasonManager:
 
             if result:
                 predicted_points = result["starting_points"]
-                new_squad_json = json.dumps(result["players"])
+                # Mark starters on player records
+                starter_ids = {p["player_id"] for p in result["starters"]}
+                for p in result["players"]:
+                    p["starter"] = p.get("player_id") in starter_ids
+                new_squad_json = json.dumps(scrub_nan(result["players"]))
                 out_list = []
                 in_list = []
                 for pid in result.get("transfers_out_ids", set()):
@@ -652,6 +674,37 @@ class SeasonManager:
             best_chip = max(chip_values.items(), key=lambda x: x[1])
             if best_chip[1] > 5.0:
                 chip_suggestion = best_chip[0]
+
+        # If fallback suggests WC/FH but multi-week plan didn't build a squad
+        # for this GW, solve MILP now to generate the full chip squad
+        if chip_suggestion in ("wildcard", "freehit") and new_squad_json is None:
+            log(f"  Building {chip_suggestion} squad (fallback chip suggestion)...")
+            pool = pred_df.dropna(subset=["position", "cost", target_col]).copy()
+            if "team_code" in pool.columns:
+                pool["team"] = pool["team_code"].map(code_to_short).fillna("")
+            cap_col = "captain_score" if "captain_score" in pool.columns else None
+            fh_result = solve_milp_team(
+                pool, target_col, budget=total_budget, captain_col=cap_col,
+            )
+            if fh_result:
+                # Mark captain on player records (solver returns captain_id separately)
+                fh_captain_id = fh_result.get("captain_id")
+                for p in fh_result["players"]:
+                    p["is_captain"] = (p.get("player_id") == fh_captain_id)
+                    p["is_vice_captain"] = False
+
+                new_squad_json = json.dumps(scrub_nan(fh_result["players"]))
+                predicted_points = fh_result["starting_points"]
+                transfers = []  # WC/FH replaces entire squad, no transfer pairs
+                # Update captain from the FH/WC squad
+                if fh_captain_id:
+                    captain_id = fh_captain_id
+                    cap_player = next(
+                        (p for p in fh_result["players"] if p.get("player_id") == captain_id),
+                        None,
+                    )
+                    if cap_player:
+                        captain_name = cap_player.get("web_name", captain_name)
 
         # --- Bank analysis ---
         log("  Running bank vs use analysis...")
@@ -870,6 +923,7 @@ class SeasonManager:
             outcome = {
                 "followed_transfers": followed_transfers,
                 "followed_captain": followed_captain,
+                "followed_chip": followed_chip,
                 "recommended_points": recommended_points,
                 "actual_points": actual_points,
                 "point_delta": point_delta,
@@ -1327,13 +1381,24 @@ class SeasonManager:
             chip_heatmap, chip_synergies, available_chips,
         )
 
+        # Pick captain: use solver captain_id, or highest-predicted starter
+        best_captain_id = result.get("captain_id")
+        best_captain_name = None
+        if best_captain_id:
+            cap_p = next((p for p in result["players"] if p.get("player_id") == best_captain_id), None)
+            best_captain_name = cap_p.get("web_name") if cap_p else None
+        if not best_captain_id and result["starters"]:
+            best_starter = max(result["starters"], key=lambda p: p.get(target_col, 0))
+            best_captain_id = best_starter.get("player_id")
+            best_captain_name = best_starter.get("web_name")
+
         # Save recommendation for GW1
         self.db.save_recommendation(
             season_id=season_id,
             gameweek=1,
             transfers_json=json.dumps([]),
-            captain_id=result["players"][0]["player_id"] if result["players"] else None,
-            captain_name=result["players"][0].get("web_name") if result["players"] else None,
+            captain_id=best_captain_id,
+            captain_name=best_captain_name,
             chip_suggestion=None,
             chip_values_json=json.dumps({}),
             bank_analysis_json=json.dumps({}),
@@ -1741,6 +1806,7 @@ class SeasonManager:
             return
 
         id_to_short = {t["id"]: t["short_name"] for t in bootstrap.get("teams", [])}
+        id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
         teams = {t["id"]: t for t in bootstrap.get("teams", [])}
 
         # Build per-team per-GW fixture data
@@ -1778,6 +1844,7 @@ class SeasonManager:
                     # BGW: no fixture this GW
                     records.append({
                         "team_id": tid,
+                        "team_code": id_to_code.get(tid),
                         "team_short": team_short,
                         "gameweek": gw,
                         "fixture_count": 0,
@@ -1790,6 +1857,7 @@ class SeasonManager:
                     avg_fdr = round(sum(fx["fdr"] for fx in fxs) / len(fxs), 1)
                     records.append({
                         "team_id": tid,
+                        "team_code": id_to_code.get(tid),
                         "team_short": team_short,
                         "gameweek": gw,
                         "fixture_count": len(fxs),

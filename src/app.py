@@ -66,6 +66,7 @@ _sse_queues_lock = threading.Lock()
 
 # Cached data/features so we don't rebuild every request
 _pipeline_cache: dict = {}
+_pipeline_lock = threading.Lock()
 _backtest_results: dict | None = None
 
 
@@ -199,13 +200,14 @@ def _load_predictions_from_csv() -> pd.DataFrame | None:
 
 def _ensure_pipeline_data(force: bool = False):
     """Load data + build features if not cached (or if forced)."""
-    if force or "df" not in _pipeline_cache:
-        with _PrintCapture():
-            data = load_all_data(force=force)
-            df = build_features(data)
-            _pipeline_cache["data"] = data
-            _pipeline_cache["df"] = df
-            _pipeline_cache["feature_cols"] = get_feature_columns(df)
+    with _pipeline_lock:
+        if force or "df" not in _pipeline_cache:
+            with _PrintCapture():
+                data = load_all_data(force=force)
+                df = build_features(data)
+                _pipeline_cache["data"] = data
+                _pipeline_cache["df"] = df
+                _pipeline_cache["feature_cols"] = get_feature_columns(df)
 
 
 def _run_in_background(name: str, fn):
@@ -759,9 +761,10 @@ def api_gw_compare():
     if best_result is None:
         return jsonify({"error": "Could not solve hindsight-best team."}), 500
 
-    best_starting_actual = round(
-        sum(p.get("actual", 0) or 0 for p in best_result["starters"]), 1,
-    )
+    # Add captain bonus: best scorer among starters gets doubled
+    best_starters_pts = [p.get("actual", 0) or 0 for p in best_result["starters"]]
+    best_captain_pts = max(best_starters_pts) if best_starters_pts else 0
+    best_starting_actual = round(sum(best_starters_pts) + best_captain_pts, 1)
 
     # Overlap between manager starters and best starters
     my_ids = {p["player_id"] for p in my_starters}
@@ -795,7 +798,7 @@ def _calculate_free_transfers(history: dict) -> int:
 
     Walks through history["current"] (one entry per GW played).
     Each GW entry has event_transfers and event_transfers_cost.
-    Wildcards/free hits (from history["chips"]) reset FT to 1.
+    WC/FH preserve FTs (chip transfers don't consume FTs) but +1 accrual still happens.
     """
     current = history.get("current", [])
     chips = history.get("chips", [])
@@ -805,6 +808,13 @@ def _calculate_free_transfers(history: dict) -> int:
     ft = 1  # Start of season
     for i, gw_entry in enumerate(current):
         event = gw_entry.get("event")
+
+        if event in chip_events:
+            # WC/FH: FTs preserved — chip transfers don't consume FTs
+            # but normal +1 FT accrual still happens
+            ft = min(ft + 1, 5)
+            continue
+
         transfers_made = gw_entry.get("event_transfers", 0)
         transfers_cost = gw_entry.get("event_transfers_cost", 0)
 
@@ -821,10 +831,6 @@ def _calculate_free_transfers(history: dict) -> int:
         else:
             # After this GW, roll forward: gain 1, cap at 5
             ft = min(ft + 1, 5)
-
-        # Wildcard/free hit resets to 1 after the GW
-        if event in chip_events:
-            ft = 1
 
     return max(ft, 1)
 

@@ -6,12 +6,20 @@ from scipy.optimize import LinearConstraint, milp
 
 
 def scrub_nan(records: list[dict]) -> list[dict]:
-    """Replace NaN/inf with None in a list of dicts for valid JSON."""
+    """Replace NaN/inf with None in a list of dicts for valid JSON.
+
+    Returns a new list of dicts (does not mutate input).
+    """
+    result = []
     for row in records:
+        cleaned = {}
         for k, v in row.items():
             if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
-                row[k] = None
-    return records
+                cleaned[k] = None
+            else:
+                cleaned[k] = v
+        result.append(cleaned)
+    return result
 
 
 def solve_milp_team(
@@ -43,7 +51,8 @@ def solve_milp_team(
     # Check if captain optimization is possible
     use_captain = captain_col and captain_col in df.columns
     if use_captain:
-        captain_scores = df[captain_col].values.astype(float)
+        # Fill NaN captain scores with the target prediction as fallback
+        captain_scores = df[captain_col].fillna(df[target_col]).values.astype(float)
         captain_bonus = captain_scores  # Captain doubles points; bonus = full captain_score
 
     SUB_WEIGHT = 0.1
@@ -154,6 +163,11 @@ def solve_milp_team(
     starters = team_df[team_df["starter"]]
     bench = team_df[~team_df["starter"]]
 
+    # Sort bench: GK first, then outfield by descending predicted points
+    bench_gk = bench[bench["position"] == "GKP"]
+    bench_outfield = bench[bench["position"] != "GKP"].sort_values(target_col, ascending=False)
+    bench = pd.concat([bench_gk, bench_outfield])
+
     pos_order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
     team_df["_pos_order"] = team_df["position"].map(pos_order)
     team_df = team_df.sort_values(
@@ -161,11 +175,19 @@ def solve_milp_team(
     )
     team_df = team_df.drop(columns=["_pos_order"])
 
+    # Include captain bonus in starting_points (captain doubles their points)
+    base_pts = starters[target_col].sum()
+    captain_pts = 0
+    if captain_id and "player_id" in starters.columns:
+        cap_match = starters.loc[starters["player_id"] == captain_id, target_col]
+        if not cap_match.empty:
+            captain_pts = cap_match.iloc[0]
+
     return {
         "starters": scrub_nan(starters.to_dict(orient="records")),
         "bench": scrub_nan(bench.to_dict(orient="records")),
         "total_cost": round(team_df["cost"].sum(), 1),
-        "starting_points": round(starters[target_col].sum(), 2),
+        "starting_points": round(base_pts + captain_pts, 2),
         "players": scrub_nan(team_df.to_dict(orient="records")),
         "captain_id": captain_id,
     }
@@ -189,7 +211,7 @@ def solve_transfer_milp(
     """
     from scipy.optimize import Bounds as ScipyBounds
 
-    required = ["position", "cost", target_col]
+    required = ["player_id", "position", "cost", target_col]
     if not all(c in player_df.columns for c in required):
         return None
 
@@ -206,7 +228,8 @@ def solve_transfer_milp(
     # Check if captain optimization is possible
     use_captain = captain_col and captain_col in df.columns
     if use_captain:
-        captain_scores = df[captain_col].values.astype(float)
+        # Fill NaN captain scores with the target prediction as fallback
+        captain_scores = df[captain_col].fillna(df[target_col]).values.astype(float)
         captain_bonus = captain_scores  # Captain doubles points; bonus = full captain_score
 
     SUB_WEIGHT = 0.1
@@ -274,7 +297,9 @@ def solve_transfer_milp(
         ubs.append(0)
 
     # TRANSFER CONSTRAINT: keep at least (15 - max_transfers) current players
-    keep_min = max(0, 15 - max_transfers)
+    # Adjust for current players missing from pool (dropped by dropna)
+    current_in_pool = int(is_current.sum())
+    keep_min = max(0, current_in_pool - max_transfers)
     add_constraint(np.concatenate([is_current, zeros]), keep_min, 15)
 
     # Captain constraints
@@ -331,18 +356,33 @@ def solve_transfer_milp(
     team_df = team_df.drop(columns=["_pos_order"])
 
     new_squad_ids = set(team_df["player_id"].tolist())
-    transfers_out_ids = current_player_ids - new_squad_ids
-    transfers_in_ids = new_squad_ids - current_player_ids
+    # Only count players that were in the solver pool for transfer tracking
+    current_ids_in_pool = set(df.loc[is_current.astype(bool), "player_id"].tolist())
+    transfers_out_ids = current_ids_in_pool - new_squad_ids
+    transfers_in_ids = new_squad_ids - current_ids_in_pool
 
     starters = team_df[team_df["starter"]]
     bench = team_df[~team_df["starter"]]
+
+    # Sort bench: GK first, then outfield by descending predicted points
+    bench_gk = bench[bench["position"] == "GKP"]
+    bench_outfield = bench[bench["position"] != "GKP"].sort_values(target_col, ascending=False)
+    bench = pd.concat([bench_gk, bench_outfield])
+
+    # Include captain bonus in starting_points (captain doubles their points)
+    base_pts = starters[target_col].sum()
+    captain_pts = 0
+    if captain_id and "player_id" in starters.columns:
+        cap_match = starters.loc[starters["player_id"] == captain_id, target_col]
+        if not cap_match.empty:
+            captain_pts = cap_match.iloc[0]
 
     return {
         "starters": scrub_nan(starters.to_dict(orient="records")),
         "bench": scrub_nan(bench.to_dict(orient="records")),
         "players": scrub_nan(team_df.to_dict(orient="records")),
         "total_cost": round(team_df["cost"].sum(), 1),
-        "starting_points": round(starters[target_col].sum(), 2),
+        "starting_points": round(base_pts + captain_pts, 2),
         "transfers_in_ids": transfers_in_ids,
         "transfers_out_ids": transfers_out_ids,
         "captain_id": captain_id,

@@ -177,12 +177,17 @@ class ChipEvaluator:
         """
         values = {}
 
+        first_pred_gw = pred_gws[0] if pred_gws else None
         for gw in all_gws:
             if gw in future_predictions:
                 gw_df = future_predictions[gw]
-                squad_preds = gw_df[gw_df["player_id"].isin(current_squad_ids)]
-                if not squad_preds.empty:
-                    best = squad_preds["predicted_points"].max()
+                # Immediate GW: use current squad; future GWs: use full pool
+                if gw == first_pred_gw:
+                    candidates = gw_df[gw_df["player_id"].isin(current_squad_ids)]
+                else:
+                    candidates = gw_df
+                if not candidates.empty:
+                    best = candidates["predicted_points"].max()
                     n_dgw = self._count_dgw_teams(fx_by_gw, gw)
                     dgw_boost = 1.0 + (n_dgw * 0.1)
                     values[gw] = round(best * dgw_boost, 1)
@@ -211,12 +216,14 @@ class ChipEvaluator:
         for gw in all_gws:
             if gw in future_predictions:
                 gw_df = future_predictions[gw]
-                # Current squad points this GW
+                # Current squad points this GW (use MILP for formation-correct baseline)
                 squad_preds = gw_df[gw_df["player_id"].isin(current_squad_ids)]
-                if not squad_preds.empty and len(squad_preds) >= 11:
-                    current_pts = squad_preds.nlargest(11, "predicted_points")["predicted_points"].sum()
-                else:
-                    current_pts = squad_preds["predicted_points"].sum() if not squad_preds.empty else 0
+                current_pts = 0
+                if not squad_preds.empty and "position" in squad_preds.columns and "cost" in squad_preds.columns:
+                    curr_result = solve_milp_team(squad_preds, "predicted_points", budget=9999)
+                    current_pts = curr_result["starting_points"] if curr_result else 0
+                if current_pts == 0 and not squad_preds.empty:
+                    current_pts = squad_preds.nlargest(min(11, len(squad_preds)), "predicted_points")["predicted_points"].sum()
 
                 # Solve unconstrained best XI (need full pool with position/cost)
                 pool = gw_df.copy()
@@ -254,7 +261,7 @@ class ChipEvaluator:
         for gw in all_gws:
             if gw in future_predictions:
                 # Sum predictions over next 3 GWs from this point
-                look_ahead_gws = [g for g in pred_gws if gw <= g <= gw + 4]
+                look_ahead_gws = [g for g in pred_gws if gw <= g <= gw + 2]
                 if not look_ahead_gws:
                     values[gw] = 0.0
                     continue
@@ -400,13 +407,16 @@ class MultiWeekPlanner:
         # Build price bonus map: player_id -> bonus points
         price_bonus = self._build_price_bonus(price_alerts)
 
-        # Build fixture swing bonus map for each GW
+        # Build fixture swing bonus map for each GW, keyed by team_code
         fx_lookup = {}
         for f in fixture_calendar:
             gw = f["gameweek"]
             if gw not in fx_lookup:
                 fx_lookup[gw] = {}
-            fx_lookup[gw][f["team_id"]] = f
+            # Use team_code if available, fall back to team_id
+            key = f.get("team_code") or f.get("team_id")
+            if key is not None:
+                fx_lookup[gw][int(key)] = f
 
         # Take first 5 prediction GWs for planning
         plan_gws = pred_gws[:5]
@@ -682,8 +692,9 @@ class MultiWeekPlanner:
                             "squad_ids": list(new_squad_ids),
                         })
 
+                        actual_transfers = len(transfers_in)
                         squad_ids = new_squad_ids
-                        ft = min(ft - use_now + 1, 5)
+                        ft = min(ft - actual_transfers + 1, 5)
                         ft = max(ft, 1)
                     else:
                         # Solver failed, keep current squad
@@ -1067,7 +1078,7 @@ def detect_plan_invalidation(
             chance = change.get("chance_of_playing", 100)
             name = change.get("web_name", "Unknown")
 
-            if status == "i" or (chance is not None and chance < 25):
+            if status in ("i", "s", "u", "n") or (chance is not None and chance < 25):
                 # Check ALL planned squads this player appears in
                 affected_gws = [
                     entry["gw"] for entry in timeline
@@ -1117,7 +1128,7 @@ def apply_availability_adjustments(
         chance = el.get("chance_of_playing_next_round")
         pid = el["id"]
 
-        if status == "i" or status == "s":  # injured or suspended
+        if status in ("i", "s", "u", "n"):  # injured, suspended, unavailable, left
             injured_ids.add(pid)
         elif chance is not None and chance < 50:
             doubtful_ids.add(pid)
