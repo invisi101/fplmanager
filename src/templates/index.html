@@ -1106,8 +1106,6 @@
   </span>
   <button class="btn" id="btnRefresh" onclick="refreshData()">🔄 Get Latest Data</button>
   <button class="btn btn-primary" id="btnTrain" onclick="trainModels()">🧠 Train Models</button>
-  <span style="border-left:1px solid #444;height:24px;margin:0 8px"></span>
-  <button class="btn" onclick="switchTabByView('gwcompare')">⚖️ GW Compare</button>
   <div class="status-area">
     <div class="status-dot" id="statusDot"></div>
     <span class="status-text" id="statusText">Idle</span>
@@ -1128,6 +1126,7 @@
   <div class="tab active" data-view="myteam" onclick="switchTab(this)">🧸 My Team</div>
   <div class="tab" data-view="predictions" onclick="switchTab(this)">🔮 Predictions</div>
   <div class="tab" data-view="bestteam" onclick="switchTab(this)">🏆 Best Team</div>
+  <div class="tab" data-view="gwcompare" onclick="switchTab(this)">⚖️ GW Compare</div>
   <div class="tab" data-view="season" onclick="switchTab(this)">📅 Season</div>
 </div>
 
@@ -1665,12 +1664,6 @@ function sortBy(key) {
     sortAsc = false;
   }
   loadPredictions();
-}
-
-function switchTabByView(view) {
-  // Deselect all tabs (these views live in the action bar, not the tab row)
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  switchTab({dataset: {view}, classList: {add(){}, remove(){}}});
 }
 
 function switchTab(tab) {
