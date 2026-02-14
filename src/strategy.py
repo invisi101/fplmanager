@@ -202,7 +202,7 @@ class ChipEvaluator:
                 # Solve unconstrained best XI (need full pool with position/cost)
                 pool = gw_df.copy()
                 if "position" in pool.columns and "cost" in pool.columns:
-                    fh_result = solve_milp_team(pool, "predicted_points", budget=1000)
+                    fh_result = solve_milp_team(pool, "predicted_points", budget=total_budget)
                     if fh_result:
                         fh_pts = fh_result["starting_points"]
                         values[gw] = round(max(0, fh_pts - current_pts), 1)
@@ -542,11 +542,14 @@ class MultiWeekPlanner:
                         if gw_chip == "wildcard":
                             # WC permanently changes squad
                             squad_ids = new_squad_ids
-                            budget = result["total_cost"]
-                        # FH: squad reverts to original next GW
-                        # (squad_ids stays unchanged for subsequent GWs)
-
-                        ft = min(ft + 1, 5)
+                            ft = min(ft + 1, 5)
+                        elif gw_chip == "freehit":
+                            # FH: squad reverts to original next GW
+                            # (squad_ids stays unchanged for subsequent GWs)
+                            # FPL resets FTs to 1 after Free Hit
+                            ft = 1
+                        else:
+                            ft = min(ft + 1, 5)
                     else:
                         # Solver failed, keep current squad
                         squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
@@ -644,7 +647,6 @@ class MultiWeekPlanner:
                         })
 
                         squad_ids = new_squad_ids
-                        budget = result["total_cost"]
                         ft = min(ft - use_now + 1, 5)
                         ft = max(ft, 1)
                     else:
@@ -1088,11 +1090,21 @@ def apply_availability_adjustments(
         gw_df = future_predictions[gw].copy()
 
         # Zero injured players for all GWs
-        gw_df.loc[gw_df["player_id"].isin(injured_ids), "predicted_points"] = 0.0
+        injured_mask = gw_df["player_id"].isin(injured_ids)
+        gw_df.loc[injured_mask, "predicted_points"] = 0.0
+        if "captain_score" in gw_df.columns:
+            gw_df.loc[injured_mask, "captain_score"] = 0.0
+        if "predicted_next_gw_points_q80" in gw_df.columns:
+            gw_df.loc[injured_mask, "predicted_next_gw_points_q80"] = 0.0
 
         # Zero doubtful players for GW+1 only
         if i == 0:
-            gw_df.loc[gw_df["player_id"].isin(doubtful_ids), "predicted_points"] = 0.0
+            doubtful_mask = gw_df["player_id"].isin(doubtful_ids)
+            gw_df.loc[doubtful_mask, "predicted_points"] = 0.0
+            if "captain_score" in gw_df.columns:
+                gw_df.loc[doubtful_mask, "captain_score"] = 0.0
+            if "predicted_next_gw_points_q80" in gw_df.columns:
+                gw_df.loc[doubtful_mask, "predicted_next_gw_points_q80"] = 0.0
 
         adjusted[gw] = gw_df
 

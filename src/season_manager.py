@@ -1430,7 +1430,7 @@ class SeasonManager:
         if "freehit" in available:
             # Free Hit: unconstrained best team vs current
             pool = pred_df.dropna(subset=["position", "cost", target_col]).copy()
-            fh_result = solve_milp_team(pool, target_col, budget=1000)
+            fh_result = solve_milp_team(pool, target_col, budget=total_budget)
             if fh_result:
                 chip_values["freehit"] = round(fh_result["starting_points"] - current_xi_pts, 1)
             else:
@@ -1494,7 +1494,7 @@ class SeasonManager:
                 if result_w1:
                     week1_pts = result_w1["starting_points"]
                     week1_squad_ids = {p["player_id"] for p in result_w1["players"]}
-                    week1_budget = result_w1["total_cost"]
+                    week1_budget = total_budget
                 else:
                     week1_pts = current_xi_pts
                     week1_squad_ids = current_squad_ids

@@ -44,8 +44,7 @@ def solve_milp_team(
     use_captain = captain_col and captain_col in df.columns
     if use_captain:
         captain_scores = df[captain_col].values.astype(float)
-        captain_bonus = captain_scores - pred  # Extra value from captaining
-        captain_bonus = np.maximum(captain_bonus, 0)  # Only positive bonus
+        captain_bonus = captain_scores  # Captain doubles points; bonus = full captain_score
 
     SUB_WEIGHT = 0.1
     if use_captain:
@@ -208,8 +207,7 @@ def solve_transfer_milp(
     use_captain = captain_col and captain_col in df.columns
     if use_captain:
         captain_scores = df[captain_col].values.astype(float)
-        captain_bonus = captain_scores - pred
-        captain_bonus = np.maximum(captain_bonus, 0)
+        captain_bonus = captain_scores  # Captain doubles points; bonus = full captain_score
 
     SUB_WEIGHT = 0.1
     if use_captain:
