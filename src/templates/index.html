@@ -971,6 +971,91 @@
     gap: 12px;
     margin-bottom: 20px;
   }
+  /* Help overlay */
+  .help-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .help-btn:hover { color: var(--accent2); border-color: var(--accent); }
+  .help-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0,0,0,0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .help-content {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    max-width: 680px;
+    width: 100%;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .help-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .help-header h2 { font-size: 18px; font-weight: 700; }
+  .help-close {
+    background: none;
+    border: none;
+    color: var(--text2);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .help-close:hover { color: var(--text); background: var(--surface2); }
+  .help-body {
+    padding: 20px;
+    overflow-y: auto;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+  }
+  .help-body h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 20px 0 8px 0;
+    color: var(--accent2);
+  }
+  .help-body h3:first-child { margin-top: 0; }
+  .help-body p { margin-bottom: 10px; color: var(--text); }
+  .help-body ol, .help-body ul { margin: 0 0 10px 20px; }
+  .help-body li { margin-bottom: 4px; }
+  .help-body strong { color: var(--text); }
+  .help-body code {
+    background: var(--surface2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  .inline-help {
+    font-size: 12.5px;
+    color: var(--text2);
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
 </style>
 </head>
 <body>
@@ -994,6 +1079,7 @@
       </defs>
     </svg>
     <h1>FPL Points Predictor</h1>
+    <button class="help-btn" onclick="openHelp()" title="How to use">?</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px">
     <span class="cache-badge" id="gwBadge" style="font-weight:600"></span>
@@ -1199,6 +1285,8 @@
         </div>
       </div>
 
+      <p class="inline-help">Follow these steps each gameweek: <strong>Get Latest Data</strong> refreshes player stats and fixtures. <strong>Generate Recommendation</strong> creates your transfer, captain, and chip plan. <strong>Execute Actions</strong> &mdash; carry out the plan on the FPL website (transfers are not automated yet). <strong>Record Results</strong> imports your actual picks after the GW finishes to track accuracy.</p>
+
       <div class="workflow-actions">
         <button class="btn btn-primary" onclick="generateRecommendation()">Generate Recommendation</button>
         <button class="btn" onclick="recordResults()">Record Results</button>
@@ -1259,6 +1347,8 @@
         </div>
         <div id="planHealthTriggers" style="font-size:12px;color:var(--text2)"></div>
       </div>
+
+      <p class="inline-help">The strategic plan looks 5 gameweeks ahead. It plans transfers, captains, and chip timing as a unified strategy. <strong>Transfer Timeline</strong> shows who to bring in/out each week. <strong>Captain Plan</strong> pre-selects your captain based on fixtures and upside. <strong>Chip Schedule</strong> optimizes when to play each chip. <strong>Chip Heatmap</strong> shows chip value across all remaining GWs. Click <strong>Generate Plan</strong> to create or refresh.</p>
 
       <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
         <button class="btn btn-primary" onclick="generateStrategicPlan()">Generate Plan</button>
@@ -3812,6 +3902,68 @@ if (savedManagerId) {
   document.getElementById('managerIdInput').value = savedManagerId;
   document.getElementById('seasonManagerId').value = savedManagerId;
 }
+// --- Help Overlay ---
+function openHelp() { document.getElementById('helpOverlay').style.display = 'flex'; }
+function closeHelp() { document.getElementById('helpOverlay').style.display = 'none'; }
 </script>
+
+<!-- Help Overlay -->
+<div id="helpOverlay" class="help-overlay" style="display:none" onclick="if(event.target===this)closeHelp()">
+  <div class="help-content">
+    <div class="help-header">
+      <h2>How to Use FPL Predictor</h2>
+      <button class="help-close" onclick="closeHelp()">&times;</button>
+    </div>
+    <div class="help-body">
+      <h3>Quick Start</h3>
+      <ol>
+        <li><strong>Train Models</strong> &mdash; Click "Train Models" in the action bar. This builds XGBoost models from historical data and generates player predictions. Takes a few minutes on first run.</li>
+        <li><strong>Browse Predictions</strong> &mdash; The Predictions tab shows predicted points for every player. Filter by position and sort by any column.</li>
+        <li><strong>Import Your Team</strong> &mdash; Go to My Team, enter your FPL Manager ID, and click "Load My Team" to import your actual squad.</li>
+        <li><strong>Season Management</strong> &mdash; Go to the Season tab, enter your Manager ID, and click "Initialize Season" to start tracking your season with weekly recommendations.</li>
+      </ol>
+
+      <h3>Predictions Tab</h3>
+      <p>Shows predicted points for every Premier League player. Use position filters (ALL / GKP / DEF / MID / FWD) to narrow the list. Key columns:</p>
+      <ul>
+        <li><strong>predicted_points</strong> &mdash; Expected points for the next gameweek</li>
+        <li><strong>captain_score</strong> &mdash; Blend of mean prediction and upside (Q80). Higher = better captain pick</li>
+        <li><strong>next_3gw_points</strong> &mdash; Predicted points over the next 3 gameweeks</li>
+      </ul>
+
+      <h3>Best Team Tab</h3>
+      <p>Uses MILP optimization to pick the best possible 15-player squad from scratch within the 100.0m budget. Respects all FPL rules: 2 GKP, 5 DEF, 5 MID, 3 FWD, max 3 from any team. The result shows a pitch visualization with starters and bench.</p>
+
+      <h3>My Team Tab</h3>
+      <p>Import your actual FPL squad to see how it compares to the optimal. Features:</p>
+      <ul>
+        <li><strong>Dual pitch view</strong> &mdash; Your actual team with predicted vs actual points</li>
+        <li><strong>Transfer recommendations</strong> &mdash; The MILP solver suggests optimal transfers given your current squad, budget, and free transfers</li>
+        <li><strong>Captain pick</strong> &mdash; Based on captain_score (mean + upside blend)</li>
+      </ul>
+
+      <h3>Season Management</h3>
+      <p>The Season tab is the core feature. After initializing, use the <strong>Weekly Workflow</strong> sub-tab each gameweek:</p>
+      <ol>
+        <li><strong>Get Latest Data</strong> &mdash; Refreshes cached player stats, injuries, and fixture data</li>
+        <li><strong>Generate Recommendation</strong> &mdash; Produces a full plan: which transfers to make, who to captain, whether to use a chip</li>
+        <li><strong>Execute Actions</strong> &mdash; Make the recommended moves on the FPL website manually</li>
+        <li><strong>Record Results</strong> &mdash; After the GW finishes, import your actual picks to track prediction accuracy over time</li>
+      </ol>
+      <p>The <strong>Overview</strong> sub-tab shows charts for rank, points, budget, and prediction accuracy across the season.</p>
+
+      <h3>Strategy</h3>
+      <p>The Strategy sub-tab provides a 5-gameweek lookahead plan:</p>
+      <ul>
+        <li><strong>Transfer Timeline</strong> &mdash; Cards showing planned transfers for each of the next 5 GWs, including free transfer banking</li>
+        <li><strong>Captain Plan</strong> &mdash; Pre-selected captains based on fixture difficulty and player upside</li>
+        <li><strong>Chip Schedule</strong> &mdash; When to play Wildcard, Free Hit, Bench Boost, and Triple Captain, based on DGW/BGW detection and synergy analysis</li>
+        <li><strong>Chip Heatmap</strong> &mdash; Table showing the estimated value of each chip across all remaining gameweeks</li>
+        <li><strong>Plan Health</strong> &mdash; Alerts if injuries, fixture changes, or prediction shifts have invalidated the current plan</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
