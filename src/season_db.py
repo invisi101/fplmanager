@@ -153,12 +153,21 @@ class SeasonDB:
             season_name = detect_current_season()
         conn = self._conn()
         cur = conn.execute(
-            """INSERT OR REPLACE INTO season
+            """INSERT INTO season
                (manager_id, manager_name, team_name, season_name, start_gw, current_gw)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(manager_id, season_name) DO UPDATE SET
+                 manager_name=excluded.manager_name,
+                 team_name=excluded.team_name""",
             (manager_id, manager_name, team_name, season_name, start_gw, start_gw),
         )
         season_id = cur.lastrowid
+        if not season_id:
+            row = conn.execute(
+                "SELECT id FROM season WHERE manager_id=? AND season_name=?",
+                (manager_id, season_name),
+            ).fetchone()
+            season_id = row[0]
         conn.commit()
         conn.close()
         return season_id

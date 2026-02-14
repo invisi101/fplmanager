@@ -841,16 +841,20 @@ class SeasonManager:
 
             # Check if transfers were followed
             rec_transfers = json.loads(rec.get("transfers_json") or "[]")
-            rec_in_ids = {t["player_id"] for t in rec_transfers if t.get("direction") == "in"}
+            rec_in_ids = {t["in"]["player_id"] for t in rec_transfers if t.get("in", {}).get("player_id")}
             actual_squad_ids = {p["player_id"] for p in squad}
             followed_transfers = 1 if rec_in_ids.issubset(actual_squad_ids) else 0
+
+            actual_chip = chip_map.get(current_event)
+            recommended_chip = rec.get("chip_suggestion")
+            followed_chip = 1 if actual_chip == recommended_chip else 0
 
             self.db.save_outcome(
                 season_id=season_id,
                 gameweek=current_event,
                 followed_transfers=followed_transfers,
                 followed_captain=followed_captain,
-                followed_chip=0,
+                followed_chip=followed_chip,
                 recommended_points=recommended_points,
                 actual_points=actual_points,
                 point_delta=point_delta,

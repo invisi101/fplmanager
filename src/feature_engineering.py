@@ -313,20 +313,20 @@ def _build_opponent_history_features(pms: pd.DataFrame, matches: pd.DataFrame,
     pm["opponent_code"] = pm["opponent_code"].astype(int)
     pm = pm.sort_values(["player_id", "opponent_code", "gameweek"])
 
-    # Expanding mean INCLUDING current match per player-opponent pair.
-    # Leakage is prevented at merge time via merge_asof (backward),
-    # which only picks up matches at GW <= the feature row's GW.
+    # Expanding mean EXCLUDING current match per player-opponent pair.
+    # shift(1) ensures GW N features only include data from GW N-1 and before,
+    # consistent with all other rolling features in the file.
     pm["vs_opponent_xg_avg"] = (
         pm.groupby(["player_id", "opponent_code"])["xg"]
-        .transform(lambda s: s.expanding(min_periods=1).mean())
+        .transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
     )
     pm["vs_opponent_goals_avg"] = (
         pm.groupby(["player_id", "opponent_code"])["goals"]
-        .transform(lambda s: s.expanding(min_periods=1).mean())
+        .transform(lambda s: s.shift(1).expanding(min_periods=1).mean())
     )
-    # Total matches played against this opponent (including current)
+    # Total matches played against this opponent (excluding current)
     pm["vs_opponent_matches"] = (
-        pm.groupby(["player_id", "opponent_code"]).cumcount() + 1
+        pm.groupby(["player_id", "opponent_code"]).cumcount()
     )
 
     result = pm[["player_id", "gameweek", "opponent_code",
