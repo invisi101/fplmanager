@@ -367,40 +367,15 @@ Bugs 1-13 have been fixed. Here's what was wrong and what changed:
 
 **Note**: Bugs 11-13 change feature values. Models should be retrained after these fixes.
 
-### MEDIUM — Remaining (unfixed)
+### MEDIUM — Fixed
 
-**Bug 14: Dashboard chip status ignores half-season reset**
-- **File**: `season_manager.py:1808-1824`
-- **Problem**: Flat check of chip usage across entire season. WC used in GW5 shows as "used" even after GW20 reset. The recommendation engine (lines 427-434) has correct half-season logic but the dashboard doesn't.
-- **Fix**: Apply the same half-season logic from `_evaluate_chips()`.
-
-**Bug 15: Injury detection stops after first affected GW**
-- **File**: `strategy.py:1043,1054`
-- **Problem**: `break` statement means multi-week injuries only show as affecting one GW in plan health. A 5-week injury may only trigger replan for the immediate GW.
-- **Fix**: Remove `break` statements; collect all affected GWs.
-
-**Bug 16: DGW fixture map only shows one opponent**
-- **File**: `season_manager.py:894`
-- **Problem**: `code not in result` guard discards second DGW fixture. Action plan shows "MCI (H)" instead of "MCI (H) + LIV (A)".
-- **Fix**: Accumulate into a list: `result.setdefault(code, []).append(...)`.
-
-**Bug 17: Stale event_points in record_results**
-- **File**: `season_manager.py:776`
-- **Problem**: Per-player `event_points` comes from bootstrap cache which may not have been refreshed.
-- **Fix**: Force bootstrap refresh at start of `record_actual_results()`, or use live history data.
-
-**Bug 18: Historical backfill stores current prices**
-- **File**: `season_manager.py:217`
-- **Problem**: Every historical GW's squad snapshot uses today's `now_cost`, not the price at that GW. Unavoidable from public API (no historical price data), but should be noted.
-
-**Bug 19: `_get_next_gw` returns GW39 at end of season**
-- **File**: `app.py:144` and `season_manager.py:91`
-- **Problem**: When GW38 is current, returns 39. Propagates to recommendations, fixtures, and planning for non-existent GW.
-- **Fix**: Clamp to 38 or return `None` when season is over.
-
-**Bug 20: BB evaluates current squad for all future GWs**
-- **File**: `strategy.py:128-149`
-- **Problem**: BB value is calculated using today's bench for every remaining GW. The WC→BB synergy uses a crude 30% uplift heuristic instead of solving the actual WC-optimized squad's bench.
+- **Bug 14**: Dashboard chip status (`season_manager.py`) — now uses half-season reset logic matching `_evaluate_chips()`. WC used in GW5 correctly shows as available again after GW20.
+- **Bug 15**: Injury detection (`strategy.py`) — removed `break` statements. Now collects ALL affected GWs instead of stopping after the first match. A 5-week injury shows all 5 GWs in plan health.
+- **Bug 16**: DGW fixture map (`season_manager.py`) — now appends both fixtures (e.g. "MCI (H) + LIV (A)") instead of discarding the second.
+- **Bug 17**: Stale event_points (`season_manager.py`) — `record_actual_results()` now force-refreshes bootstrap before reading `event_points`.
+- **Bug 18**: Historical backfill prices (`season_manager.py`) — documented as unavoidable (public API has no historical prices). Added code comment.
+- **Bug 19**: GW39 at end of season (`app.py`, `season_manager.py`) — `_get_next_gw` now clamped to max 38.
+- **Bug 20**: BB evaluation (`strategy.py`) — for future GWs within prediction horizon, now solves MILP for optimal squad and uses that bench instead of current squad's bench. Immediate GW still uses current squad.
 
 ---
 
