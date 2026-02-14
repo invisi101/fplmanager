@@ -316,6 +316,27 @@ All phases from the original roadmap are done:
 - **Reactive re-planning**: Injury/fixture change detection with SSE alerts + one-click replan
 - **Outcome tracking**: Recommendation vs actual comparison, accuracy history charts
 
+## Remaining TODO: Rethink Backtesting & Feature Visualization
+
+The following 4 UI buttons have been **removed from the frontend** (but all backend code is preserved):
+
+- **Run Feature Selection** (`/api/feature-selection`) — `src/feature_selection.py` still exists
+- **Model Importance** (`/api/xgb-importance`) — endpoint still in `src/app.py`
+- **Feature Insights** panel — showed feature charts, reports, and XGBoost importance
+- **Backtest** panel — walk-forward backtesting UI with per-GW breakdown
+
+**Why removed**: After the dynamic season handling rewrite (multi-season support, graduated weights, generic data fetching), these features need rethinking. The backtest framework may need updates for multi-season walk-forward, and the feature visualization approach should be reconsidered given the new 100+ feature set across N seasons.
+
+**To restore**: The backend endpoints (`/api/feature-selection`, `/api/xgb-importance`, `/api/feature-report`, `/api/xgb-importance-report`, `/api/backtest`, `/api/backtest-results`) and Python files (`src/backtest.py`, `src/feature_selection.py`) are all intact. To bring back the UI, re-add the buttons to the action bar in `src/templates/index.html`, re-add the HTML panels, CSS styles, and JS functions. Check git history for the removed code (commit after the dynamic season handling commit).
+
+**What to consider when rebuilding**:
+- Backtest should work seamlessly across all dynamically detected seasons
+- Feature importance visualization could show per-season breakdowns
+- Consider integrating model accuracy metrics into the Season dashboard instead of a separate panel
+- The current walk-forward CV in `src/backtest.py` may need updating for 3+ season training
+
+---
+
 ## Remaining TODO: Full Autonomy
 
 The one remaining feature is **authenticated FPL API access for autonomous execution**:

@@ -287,65 +287,6 @@
   .pos-tag.MID { color: #a78bfa; }
   .pos-tag.FWD { color: #f87171; }
 
-  /* Feature insights panel */
-  .insights-panel { display: none; }
-  .insights-panel.visible { display: block; }
-
-  .model-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .model-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px;
-  }
-  .model-card h4 {
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 6px;
-  }
-  .model-card .meta {
-    font-size: 12px;
-    color: var(--text2);
-  }
-  .model-card .mae {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--accent);
-    margin: 4px 0;
-  }
-
-  .chart-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-    gap: 16px;
-    margin-top: 16px;
-  }
-  .chart-grid img {
-    width: 100%;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-  }
-
-  .report-block {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-    margin-top: 16px;
-    max-height: 500px;
-    overflow-y: auto;
-    font-family: 'SF Mono', Consolas, monospace;
-    font-size: 12px;
-    white-space: pre-wrap;
-    color: var(--text2);
-    line-height: 1.6;
-  }
-
   .progress-log {
     display: none;
     background: var(--surface);
@@ -556,154 +497,6 @@
   .bench-card .p-team { font-size: 10px; color: var(--text2); }
   .bench-card .p-pts { font-size: 14px; font-weight: 700; color: var(--accent); margin-top: 2px; }
   .bench-card .p-cost { font-size: 10px; color: var(--text2); }
-
-  /* Backtest panel */
-  .backtest-panel { display: none; }
-  .backtest-panel.visible { display: block; }
-
-  .bt-controls {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-  }
-  .bt-controls label { font-size: 13px; color: var(--text2); }
-  .bt-input {
-    width: 60px;
-    padding: 6px 8px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface2);
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 600;
-    text-align: center;
-    outline: none;
-  }
-  .bt-input:focus { border-color: var(--accent); }
-
-  .bt-summary {
-    display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-  }
-
-  .bt-section-title {
-    font-size: 15px;
-    font-weight: 600;
-    margin: 20px 0 10px;
-    color: var(--text);
-  }
-
-  .bt-comparison {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-  .bt-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px;
-  }
-  .bt-card .bc-label {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text2);
-    margin-bottom: 4px;
-  }
-  .bt-card .bc-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 2px;
-  }
-  .bt-card .bc-name { font-size: 12px; color: var(--text2); }
-  .bt-card .bc-val { font-size: 16px; font-weight: 700; }
-  .bt-card .bc-val.model { color: var(--accent); }
-  .bt-card .bc-val.ep { color: var(--orange); }
-  .bt-card .bc-val.form { color: var(--text2); }
-  .bt-card .bc-val.best { color: var(--green); }
-
-  .bt-bar {
-    height: 4px;
-    border-radius: 2px;
-    background: var(--border);
-    margin-top: 6px;
-    overflow: hidden;
-  }
-  .bt-bar-fill {
-    height: 100%;
-    border-radius: 2px;
-    transition: width 0.3s;
-  }
-
-  .bt-table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-bottom: 20px;
-  }
-  .bt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .bt-table th {
-    position: sticky;
-    top: 0;
-    background: var(--surface2);
-    padding: 8px 12px;
-    text-align: left;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-    color: var(--text2);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  .bt-table td {
-    padding: 6px 12px;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  .bt-table tr:nth-child(even) { background: var(--surface); }
-  .bt-table tr:hover { background: var(--surface2); }
-  .bt-good { color: var(--green); }
-  .bt-bad { color: var(--red); }
-  .bt-winner { background: rgba(108, 99, 255, 0.1); }
-
-  .bt-pos-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-  .bt-pos-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px;
-  }
-  .bt-pos-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
-  .bt-pos-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 12px;
-    padding: 3px 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .bt-pos-row:last-child { border-bottom: none; }
-  .bt-note {
-    font-size: 12px;
-    color: var(--text2);
-    margin-top: 16px;
-    padding: 10px 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    line-height: 1.6;
-  }
 
   /* GW Compare panel */
   .compare-panel { display: none; }
@@ -1218,11 +1011,7 @@
   </span>
   <button class="btn" id="btnRefresh" onclick="refreshData()">🔄 Get Latest Data</button>
   <button class="btn btn-primary" id="btnTrain" onclick="trainModels()">🧠 Train Models</button>
-  <button class="btn" id="btnFeatures" onclick="runFeatureSelection()">🎯 Run Feature Selection</button>
-  <button class="btn" id="btnXgbImportance" onclick="runXgbImportance()">📈 Model Importance</button>
   <span style="border-left:1px solid #444;height:24px;margin:0 8px"></span>
-  <button class="btn" onclick="switchTabByView('insights')">📊 Feature Insights</button>
-  <button class="btn" onclick="switchTabByView('backtest')">🧪 Backtest</button>
   <button class="btn" onclick="switchTabByView('gwcompare')">⚖️ GW Compare</button>
   <div class="status-area">
     <div class="status-dot" id="statusDot"></div>
@@ -1287,23 +1076,6 @@
   </div>
 </div>
 
-<!-- Backtest Panel -->
-<div class="content backtest-panel" id="backtestPanel">
-  <div class="bt-controls">
-    <label>From GW:</label>
-    <input type="number" class="bt-input" id="btStartGW" value="5" min="2" max="38">
-    <label>To GW:</label>
-    <input type="number" class="bt-input" id="btEndGW" value="25" min="2" max="38">
-    <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-      <input type="checkbox" id="btMultiSeason" style="accent-color:var(--accent)"> Multi-Season
-    </label>
-    <button class="btn btn-primary" onclick="runBacktest()">Run Backtest</button>
-  </div>
-  <div id="btContent">
-    <div class="empty-state"><h3>Backtest</h3><p>Test model accuracy against historical gameweeks.<br>Compares Model vs FPL's ep_next vs naive Form baseline vs Last 3 GW Avg.</p></div>
-  </div>
-</div>
-
 <!-- GW Compare Panel -->
 <div class="content compare-panel" id="gwComparePanel">
   <div class="compare-controls">
@@ -1348,22 +1120,6 @@
     </div>
     <div id="transferResults"></div>
   </div>
-</div>
-
-<!-- Feature Insights Panel -->
-<div class="content insights-panel" id="insightsPanel">
-  <h3 style="margin-bottom: 12px; font-size: 16px;">Model Accuracy</h3>
-  <div class="model-cards" id="modelCards"></div>
-  <h3 style="margin-bottom: 8px; font-size: 16px;">Feature Importance Charts</h3>
-  <div class="chart-grid" id="chartGrid"></div>
-  <h3 style="margin-top: 24px; margin-bottom: 8px; font-size: 16px;">Feature Selection Report</h3>
-  <div class="report-block" id="reportBlock">No report available. Run feature selection first.</div>
-
-  <h3 style="margin-top: 32px; margin-bottom: 8px; font-size: 16px;">XGBoost Model Importance</h3>
-  <p style="font-size: 12px; color: var(--text2); margin-bottom: 12px;">Feature importances from the actual trained XGBoost models used for predictions.</p>
-  <div class="chart-grid" id="xgbChartGrid"></div>
-  <h3 style="margin-top: 24px; margin-bottom: 8px; font-size: 16px;">XGBoost Importance Report</h3>
-  <div class="report-block" id="xgbReportBlock">No report available. Click "Model Importance" to generate.</div>
 </div>
 
 <!-- Season Panel -->
@@ -1592,9 +1348,6 @@ function connectSSE() {
         // Reload predictions and model info
         loadPredictions();
         loadModelInfo();
-        loadFeatureReport();
-        loadXgbImportanceReport();
-        loadBacktestResults();
         loadGWCompareResults();
         // Reload season data if season tab is active
         if (typeof seasonOnTaskDone === 'function') seasonOnTaskDone();
@@ -1616,7 +1369,7 @@ function setTaskRunning(running) {
   taskRunning = running;
   const dot = document.getElementById('statusDot');
   const log = document.getElementById('progressLog');
-  const btns = [document.getElementById('btnRefresh'), document.getElementById('btnTrain'), document.getElementById('btnFeatures'), document.getElementById('btnXgbImportance')];
+  const btns = [document.getElementById('btnRefresh'), document.getElementById('btnTrain')];
 
   if (running) {
     dot.classList.add('running');
@@ -1648,18 +1401,6 @@ function refreshData() {
 
 function trainModels() {
   fetch('/api/train', { method: 'POST' }).then(r => r.json()).then(d => {
-    if (d.error) alert(d.error);
-  });
-}
-
-function runFeatureSelection() {
-  fetch('/api/feature-selection', { method: 'POST' }).then(r => r.json()).then(d => {
-    if (d.error) alert(d.error);
-  });
-}
-
-function runXgbImportance() {
-  fetch('/api/xgb-importance', { method: 'POST' }).then(r => r.json()).then(d => {
     if (d.error) alert(d.error);
   });
 }
@@ -1717,72 +1458,6 @@ function loadModelInfo() {
       badge.textContent = 'No cached data';
     }
 
-    // Model cards
-    const container = document.getElementById('modelCards');
-    container.innerHTML = '';
-    d.models.filter(m => m.target === 'next_gw_points').forEach(m => {
-      const card = document.createElement('div');
-      card.className = 'model-card';
-      if (m.exists) {
-        card.innerHTML = `<h4>${m.position} &mdash; Next GW</h4>
-          <div class="meta">Trained: ${m.trained_at}</div>
-          <div class="meta">Features: ${m.n_features}</div>`;
-      } else {
-        card.innerHTML = `<h4>${m.position} &mdash; Next GW</h4>
-          <div class="meta" style="color:var(--red)">Not trained</div>`;
-      }
-      container.appendChild(card);
-    });
-  });
-}
-
-function loadFeatureReport() {
-  fetch('/api/feature-report').then(r => r.json()).then(d => {
-    // Charts
-    const grid = document.getElementById('chartGrid');
-    grid.innerHTML = '';
-    if (d.charts && d.charts.length) {
-      d.charts.forEach(name => {
-        const img = document.createElement('img');
-        img.src = '/api/feature-charts/' + name;
-        img.alt = name;
-        img.loading = 'lazy';
-        grid.appendChild(img);
-      });
-    }
-
-    // Report text
-    const block = document.getElementById('reportBlock');
-    if (d.report) {
-      block.textContent = d.report;
-    } else {
-      block.textContent = d.error || 'No report available.';
-    }
-  });
-}
-
-function loadXgbImportanceReport() {
-  fetch('/api/xgb-importance-report').then(r => r.json()).then(d => {
-    // Charts
-    const grid = document.getElementById('xgbChartGrid');
-    grid.innerHTML = '';
-    if (d.charts && d.charts.length) {
-      d.charts.forEach(name => {
-        const img = document.createElement('img');
-        img.src = '/api/feature-charts/' + name;
-        img.alt = name;
-        img.loading = 'lazy';
-        grid.appendChild(img);
-      });
-    }
-
-    // Report text
-    const block = document.getElementById('xgbReportBlock');
-    if (d.report) {
-      block.textContent = d.report;
-    } else {
-      block.textContent = d.error || 'No report available. Click "Model Importance" to generate.';
-    }
   });
 }
 
@@ -1901,27 +1576,11 @@ function switchTab(tab) {
   const view = tab.dataset.view;
   document.getElementById('predictionsPanel').style.display = view === 'predictions' ? 'block' : 'none';
 
-  const insights = document.getElementById('insightsPanel');
-  if (view === 'insights') {
-    insights.classList.add('visible');
-    loadFeatureReport();
-    loadXgbImportanceReport();
-  } else {
-    insights.classList.remove('visible');
-  }
-
   const bestTeam = document.getElementById('bestTeamPanel');
   if (view === 'bestteam') {
     bestTeam.classList.add('visible');
   } else {
     bestTeam.classList.remove('visible');
-  }
-
-  const backtest = document.getElementById('backtestPanel');
-  if (view === 'backtest') {
-    backtest.classList.add('visible');
-  } else {
-    backtest.classList.remove('visible');
   }
 
   const gwCompare = document.getElementById('gwComparePanel');
@@ -2086,203 +1745,6 @@ function lockInTeam() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Backtest
-// ---------------------------------------------------------------------------
-function runBacktest() {
-  const startGW = parseInt(document.getElementById('btStartGW').value) || 5;
-  const endGW = parseInt(document.getElementById('btEndGW').value) || 25;
-  const multiSeason = document.getElementById('btMultiSeason').checked;
-
-  document.getElementById('btContent').innerHTML = '<div class="empty-state"><p>Running backtest...</p></div>';
-
-  const payload = { start_gw: startGW, end_gw: endGW };
-  if (multiSeason) {
-    payload.seasons = window._availableSeasons;
-  }
-
-  fetch('/api/backtest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).then(r => r.json()).then(d => {
-    if (d.error) alert(d.error);
-  });
-}
-
-function loadBacktestResults() {
-  fetch('/api/backtest-results').then(r => r.json()).then(d => {
-    if (d.error || !d.summary) return;
-
-    const s = d.summary;
-    const container = document.getElementById('btContent');
-    const isMultiSeason = s.seasons && s.seasons.length > 1;
-    let html = '';
-
-    // Helper to format CI
-    function ciText(ci) {
-      if (!ci || ci.length !== 2) return '';
-      return `<div style="font-size:10px;color:var(--text2);margin-top:2px">[${ci[0]}, ${ci[1]}]</div>`;
-    }
-
-    // --- Hero summary cards ---
-    html += '<div class="bt-summary">';
-    html += _btSumCard('Model Wins', `${s.model_wins}/${s.n_gameweeks}`, 'model', s.win_rate_ci);
-    html += _btSumCard('Model MAE', s.model_avg_mae, 'model', s.model_mae_ci);
-    html += _btSumCard('ep_next MAE', s.ep_avg_mae, 'ep', s.ep_mae_ci);
-    html += _btSumCard('Last 3 Avg MAE', s.last3_avg_mae != null ? s.last3_avg_mae : '-', 'form');
-    html += _btSumCard('Captain Top 3', `${Math.round(s.captain_hit_rate * 100)}%`, 'model');
-    html += _btSumCard('Capture %', `${s.model_capture_pct}%`, 'best', s.capture_pct_ci);
-    html += '</div>';
-
-    if (isMultiSeason) {
-      html += `<div style="font-size:12px;color:var(--text2);margin-bottom:12px">Seasons: ${s.seasons.join(', ')} &middot; ${s.n_gameweeks} gameweeks</div>`;
-    }
-
-    // --- Top 11 comparison cards ---
-    html += '<div class="bt-section-title">Average Top 11 Points Per Gameweek</div>';
-    html += '<div class="bt-comparison">';
-
-    const maxPts = s.actual_avg_top11_pts;
-    html += _btBarCard('Model', s.model_avg_top11_pts, maxPts, 'model', 'var(--accent)', s.model_top11_pts_ci);
-    html += _btBarCard('ep_next', s.ep_avg_top11_pts, maxPts, 'ep', 'var(--orange)');
-    html += _btBarCard('Last 3 Avg', s.last3_avg_top11_pts != null ? s.last3_avg_top11_pts : '-', maxPts, 'form', 'var(--yellow)');
-    html += _btBarCard('Form', s.form_avg_top11_pts, maxPts, 'form', 'var(--text2)');
-    html += _btBarCard('Actual Best', s.actual_avg_top11_pts, maxPts, 'best', 'var(--green)');
-    html += '</div>';
-
-    // --- Overlap cards ---
-    html += '<div class="bt-comparison">';
-    html += `<div class="bt-card">
-      <div class="bc-label">Avg Overlap with Actual Best 11</div>
-      <div class="bc-row"><span class="bc-name">Model</span><span class="bc-val model">${s.model_avg_overlap}/11</span></div>
-      <div class="bc-row"><span class="bc-name">ep_next</span><span class="bc-val ep">${s.ep_avg_overlap}/11</span></div>
-    </div>`;
-    html += `<div class="bt-card">
-      <div class="bc-label">Wins (Top 11 Points)</div>
-      <div class="bc-row"><span class="bc-name">Model</span><span class="bc-val model">${s.model_wins}</span></div>
-      <div class="bc-row"><span class="bc-name">ep_next</span><span class="bc-val ep">${s.ep_wins}</span></div>
-      <div class="bc-row"><span class="bc-name">Ties</span><span class="bc-val">${s.ties}</span></div>
-    </div>`;
-    html += '</div>';
-
-    // --- Per-GW table ---
-    html += '<div class="bt-section-title">Per-Gameweek Breakdown</div>';
-    html += '<div class="bt-table-wrap"><table class="bt-table"><thead><tr>';
-    if (isMultiSeason) html += '<th>Season</th>';
-    html += '<th>GW</th><th>Players</th>';
-    html += '<th>Model MAE</th><th>ep MAE</th><th>Form MAE</th><th>Last3 MAE</th>';
-    html += '<th>Model Top11</th><th>ep Top11</th><th>Last3 Top11</th><th>Best</th>';
-    html += '<th>Overlap</th>';
-    html += '<th>Captain</th><th>Cap Pts</th><th>Cap Rank</th>';
-    html += '<th>Winner</th>';
-    html += '</tr></thead><tbody>';
-
-    d.gameweeks.forEach(gw => {
-      const winClass = gw.winner === 'MODEL' ? 'bt-good' : gw.winner === 'ep_next' ? 'bt-bad' : '';
-      const capClass = gw.captain_in_top3 ? 'bt-good' : '';
-      html += '<tr>';
-      if (isMultiSeason) html += `<td style="font-size:11px;color:var(--text2)">${gw.season || ''}</td>`;
-      html += `
-        <td style="font-weight:600">GW${gw.gw}</td>
-        <td>${gw.n_players}</td>
-        <td class="bt-good">${gw.model_mae}</td>
-        <td>${gw.ep_mae}</td>
-        <td>${gw.form_mae}</td>
-        <td>${gw.last3_mae != null ? gw.last3_mae : '-'}</td>
-        <td style="font-weight:600">${gw.model_top11_pts}</td>
-        <td>${gw.ep_top11_pts}</td>
-        <td>${gw.last3_top11_pts != null ? gw.last3_top11_pts : '-'}</td>
-        <td style="color:var(--text2)">${gw.actual_best_pts}</td>
-        <td>${gw.model_overlap}/11</td>
-        <td>${gw.captain_name}</td>
-        <td class="${capClass}">${gw.captain_actual}</td>
-        <td>${gw.captain_actual_rank}</td>
-        <td class="${winClass}" style="font-weight:600">${gw.winner}</td>
-      </tr>`;
-    });
-
-    html += '</tbody></table></div>';
-
-    // --- Per-position breakdown ---
-    if (d.by_position && Object.keys(d.by_position).length) {
-      html += '<div class="bt-section-title">Per-Position Accuracy</div>';
-      html += '<div class="bt-pos-grid">';
-      for (const [pos, data] of Object.entries(d.by_position)) {
-        const posClass = pos;
-        const maeValues = [data.model_mae, data.ep_mae, data.form_mae];
-        if (data.last3_mae != null) maeValues.push(data.last3_mae);
-        const bestMAE = Math.min(...maeValues);
-        const pStr = data.mae_pvalue != null ? `p=${data.mae_pvalue}` : 'p=n/a';
-        const pColor = data.mae_pvalue != null && data.mae_pvalue < 0.05 ? 'var(--green)' : 'var(--text2)';
-        html += `<div class="bt-pos-card">
-          <h4><span class="pos-tag ${posClass}">${pos}</span> (avg ${data.avg_players} players)</h4>
-          <div class="bt-pos-row">
-            <span>Model MAE</span>
-            <span style="font-weight:700;color:${data.model_mae === bestMAE ? 'var(--green)' : 'var(--text)'}">${data.model_mae}</span>
-          </div>`;
-        if (data.model_mae_ci) {
-          html += `<div style="font-size:10px;color:var(--text2);text-align:right">[${data.model_mae_ci[0]}, ${data.model_mae_ci[1]}]</div>`;
-        }
-        html += `<div class="bt-pos-row">
-            <span>ep_next MAE</span>
-            <span style="font-weight:700;color:${data.ep_mae === bestMAE ? 'var(--green)' : 'var(--text)'}">${data.ep_mae}</span>
-          </div>`;
-        if (data.ep_mae_ci) {
-          html += `<div style="font-size:10px;color:var(--text2);text-align:right">[${data.ep_mae_ci[0]}, ${data.ep_mae_ci[1]}]</div>`;
-        }
-        html += `<div class="bt-pos-row">
-            <span>Form MAE</span>
-            <span style="font-weight:700;color:${data.form_mae === bestMAE ? 'var(--green)' : 'var(--text)'}">${data.form_mae}</span>
-          </div>`;
-        if (data.last3_mae != null) {
-          html += `<div class="bt-pos-row">
-            <span>Last 3 Avg MAE</span>
-            <span style="font-weight:700;color:${data.last3_mae === bestMAE ? 'var(--green)' : 'var(--text)'}">${data.last3_mae}</span>
-          </div>`;
-        }
-        html += `<div style="font-size:11px;color:${pColor};margin-top:6px;text-align:right">vs ep_next: ${pStr}</div>`;
-        html += '</div>';
-      }
-      html += '</div>';
-    }
-
-    // --- Note about methodology ---
-    html += `<div class="bt-note">
-      <strong>Methodology:</strong> For each gameweek, the model uses features from the previous GW
-      to predict points. Compares against three baselines: FPL's ep_next (official prediction),
-      naive Form (recent form stat), and Last 3 GW Avg (average of prior 3 gameweeks' actual points).
-      Top 11 = best 11 players by each method's ranking.
-      Captain = model's #1 pick; "Top 3" = whether that pick finished in the actual top 3 scorers.
-      Overlap = how many of the model's top 11 were in the actual highest-scoring 11.
-      95% confidence intervals shown in brackets [lower, upper] via bootstrap (10,000 resamples).
-    </div>`;
-
-    container.innerHTML = html;
-  });
-}
-
-function _btSumCard(label, value, cls, ci) {
-  let ciHtml = '';
-  if (ci && ci.length === 2) {
-    ciHtml = `<div style="font-size:10px;color:var(--text2);margin-top:1px">[${ci[0]}, ${ci[1]}]</div>`;
-  }
-  return `<div class="summary-stat"><div class="label">${label}</div><div class="value ${cls}">${value}</div>${ciHtml}</div>`;
-}
-
-function _btBarCard(name, pts, max, cls, color, ci) {
-  const ptsNum = typeof pts === 'number' ? pts : 0;
-  const pct = max > 0 ? Math.round((ptsNum / max) * 100) : 0;
-  let ciHtml = '';
-  if (ci && ci.length === 2) {
-    ciHtml = `<div style="font-size:10px;color:var(--text2)">[${ci[0]}, ${ci[1]}]</div>`;
-  }
-  return `<div class="bt-card">
-    <div class="bc-label">${name}</div>
-    <div class="bc-val ${cls}">${pts} pts</div>${ciHtml}
-    <div class="bt-bar"><div class="bt-bar-fill" style="width:${pct}%;background:${color}"></div></div>
-  </div>`;
-}
 
 // ---------------------------------------------------------------------------
 // GW Compare
