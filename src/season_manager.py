@@ -152,12 +152,13 @@ class SeasonManager:
         chips_used = history.get("chips", [])
 
         # Create season record
+        from src.data_fetcher import detect_current_season
         start_gw = gw_entries[0]["event"] if gw_entries else 1
         season_id = self.db.create_season(
             manager_id=manager_id,
             manager_name=manager_name,
             team_name=team_name,
-            season_name="2025-2026",
+            season_name=detect_current_season(),
             start_gw=start_gw,
         )
         self.db.update_season_gw(season_id, current_event)
@@ -1116,11 +1117,12 @@ class SeasonManager:
             manager_name = f"{entry.get('player_first_name', '')} {entry.get('player_last_name', '')}".strip()
             team_name = entry.get("name", "")
 
+        from src.data_fetcher import detect_current_season
         season_id = self.db.create_season(
             manager_id=manager_id,
             manager_name=manager_name,
             team_name=team_name,
-            season_name="2025-2026",
+            season_name=detect_current_season(),
             start_gw=1,
         )
 

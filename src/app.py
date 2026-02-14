@@ -118,8 +118,11 @@ class _PrintCapture:
         return self._buffer.getvalue()
 
 
-def _get_team_map(season: str = "2025-2026") -> dict[int, str]:
+def _get_team_map(season: str = "") -> dict[int, str]:
     """Map team_code -> short_name from cached teams CSV."""
+    if not season:
+        from src.data_fetcher import detect_current_season
+        season = detect_current_season()
     teams_csv = CACHE_DIR / f"{season}_teams.csv"
     if teams_csv.exists():
         teams = pd.read_csv(teams_csv, encoding="utf-8")
@@ -480,11 +483,17 @@ def api_model_info():
     # Cache freshness
     age = _cache_age_seconds()
 
+    # Season info
+    from src.data_fetcher import detect_current_season, get_all_seasons
+    current = detect_current_season()
+
     return jsonify({
         "models": info,
         "next_gw": _get_next_gw(),
         "cache_age_seconds": age,
         "cache_max_age_seconds": CACHE_MAX_AGE_SECONDS,
+        "current_season": current,
+        "available_seasons": get_all_seasons(current),
     })
 
 
@@ -622,7 +631,8 @@ def api_lock_in_team():
         gameweek = int(body.get("gameweek"))
     except (TypeError, ValueError):
         return jsonify({"error": "budget and gameweek are required."}), 400
-    season = body.get("season", "2025-2026")
+    from src.data_fetcher import detect_current_season
+    season = body.get("season", detect_current_season())
     target = body.get("target", "predicted_next_gw_points")
 
     key = f"{season}_GW{gameweek}"
@@ -684,7 +694,8 @@ def api_backtest():
     # Optional multi-season support
     seasons = body.get("seasons", None)
     if seasons is not None:
-        valid_seasons = {"2024-2025", "2025-2026"}
+        from src.data_fetcher import detect_current_season, get_all_seasons
+        valid_seasons = set(get_all_seasons(detect_current_season()))
         if not isinstance(seasons, list) or not all(isinstance(s, str) for s in seasons):
             return jsonify({"error": "seasons must be a list of strings."}), 400
         invalid = [s for s in seasons if s not in valid_seasons]
@@ -721,7 +732,8 @@ def api_gw_compare():
     global _gw_compare_results
 
     body = request.get_json(silent=True) or {}
-    season = body.get("season", "2025-2026")
+    from src.data_fetcher import detect_current_season
+    season = body.get("season", detect_current_season())
     try:
         gameweek = int(body.get("gameweek", 10))
     except (TypeError, ValueError):

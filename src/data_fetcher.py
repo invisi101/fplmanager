@@ -19,8 +19,13 @@ API_CACHE_MAX_AGE_SECONDS = 30 * 60  # 30 minutes (FPL API — injury/price chan
 
 GITHUB_BASE = "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/main/data"
 
-# 2024-2025 structure: {season}/{category}/{category}.csv
-SEASON_2425_FILES = {
+LAYOUT_FLAT = "flat"
+LAYOUT_PER_GW = "per_gw"
+
+# Only 2024-2025 uses the flat layout. All others use per-GW.
+FLAT_LAYOUT_SEASONS = {"2024-2025"}
+
+FLAT_FILES = {
     "players": "players/players.csv",
     "playermatchstats": "playermatchstats/playermatchstats.csv",
     "matches": "matches/matches.csv",
@@ -28,22 +33,59 @@ SEASON_2425_FILES = {
     "teams": "teams/teams.csv",
 }
 
-# 2025-2026 structure: root-level files + By Gameweek/GW{N}/ per-GW files
-SEASON_2526_ROOT_FILES = {
+PER_GW_ROOT_FILES = {
     "players": "players.csv",
     "playerstats": "playerstats.csv",
     "teams": "teams.csv",
 }
-SEASON_2526_GW_FILES = [
-    "playermatchstats.csv",
-    "matches.csv",
-]
+
+PER_GW_GW_FILES = ["playermatchstats.csv", "matches.csv"]
 
 FPL_API_BASE = "https://fantasy.premierleague.com/api"
 FPL_API_ENDPOINTS = {
     "bootstrap": f"{FPL_API_BASE}/bootstrap-static/",
     "fixtures": f"{FPL_API_BASE}/fixtures/",
 }
+
+
+def get_season_layout(season: str) -> str:
+    """Return 'flat' for 2024-2025, 'per_gw' for everything else."""
+    return LAYOUT_FLAT if season in FLAT_LAYOUT_SEASONS else LAYOUT_PER_GW
+
+
+def detect_current_season(bootstrap: dict | None = None) -> str:
+    """Detect the current FPL season from bootstrap GW1 deadline_time, or fallback to date."""
+    if bootstrap:
+        events = bootstrap.get("events", [])
+        if events:
+            deadline = events[0].get("deadline_time", "")
+            if deadline[:4].isdigit():
+                y = int(deadline[:4])
+                return f"{y}-{y+1}"
+    # Try cached bootstrap
+    cache = CACHE_DIR / "fpl_api_bootstrap.json"
+    if cache.exists():
+        try:
+            return detect_current_season(json.loads(cache.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    # Date fallback
+    from datetime import datetime
+    now = datetime.now()
+    y = now.year if now.month >= 6 else now.year - 1
+    return f"{y}-{y+1}"
+
+
+def get_all_seasons(current: str) -> list[str]:
+    """Return all seasons to fetch, oldest first. Currently: 2 prior + current."""
+    start = int(current.split("-")[0])
+    return [f"{start-2}-{start-1}", f"{start-1}-{start}", current]
+
+
+def get_previous_season(current: str) -> str:
+    """Return the season immediately before the given one."""
+    start = int(current.split("-")[0])
+    return f"{start-1}-{start}"
 
 
 def _cache_path(name: str) -> Path:
@@ -108,71 +150,54 @@ def fetch_manager_history(manager_id: int) -> dict:
     return resp.json()
 
 
-def _detect_max_gw_2526(force: bool = False) -> int:
-    """Detect the latest available gameweek for 2025-2026 by checking playerstats.
-
-    Always fetches fresh to avoid stale cache capping the GW loop and
-    missing newly published gameweek data.
-    """
-    cache_file = _cache_path("2025-2026_playerstats.csv")
-    url = f"{GITHUB_BASE}/2025-2026/playerstats.csv"
+def _detect_max_gw(season: str, force: bool = False) -> int:
+    """Detect the latest available gameweek for a per-GW layout season."""
+    cache_file = _cache_path(f"{season}_playerstats.csv")
+    url = f"{GITHUB_BASE}/{season}/playerstats.csv"
     df = _fetch_csv(url, cache_file, force=True)
     return int(df["gw"].max())
 
 
-def fetch_2425_data(force: bool = False) -> dict[str, pd.DataFrame]:
-    """Fetch 2024-2025 season data."""
-    critical_keys = {"players", "playerstats", "playermatchstats", "matches"}
-    data = {}
-    for key, path in SEASON_2425_FILES.items():
-        url = f"{GITHUB_BASE}/2024-2025/{path}"
-        cache_file = _cache_path(f"2024-2025_{key}.csv")
-        try:
-            data[key] = _fetch_csv(url, cache_file, force=force)
-        except requests.HTTPError as e:
-            if key in critical_keys:
-                print(f"  ERROR: failed to fetch critical file 2024-2025/{key}: {e}")
-                raise
-            print(f"  Warning: could not fetch 2024-2025/{key}: {e}")
-    return data
-
-
-def fetch_2526_data(force: bool = False) -> dict[str, pd.DataFrame]:
-    """Fetch 2025-2026 season data (root files + per-GW files combined)."""
+def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFrame]:
+    """Fetch data for any season, auto-detecting layout."""
+    layout = get_season_layout(season)
     data = {}
 
-    # Root-level files
-    critical_keys = {"players", "playerstats"}
-    for key, path in SEASON_2526_ROOT_FILES.items():
-        url = f"{GITHUB_BASE}/2025-2026/{path}"
-        cache_file = _cache_path(f"2025-2026_{key}.csv")
-        try:
-            data[key] = _fetch_csv(url, cache_file, force=force)
-        except requests.HTTPError as e:
-            if key in critical_keys:
-                print(f"  ERROR: failed to fetch critical file 2025-2026/{key}: {e}")
-                raise
-            print(f"  Warning: could not fetch 2025-2026/{key}: {e}")
-
-    # Per-GW files — combine across all GWs
-    max_gw = _detect_max_gw_2526(force=force)
-    print(f"  2025-2026: detected {max_gw} gameweeks")
-
-    for filename in SEASON_2526_GW_FILES:
-        key = filename.replace(".csv", "")
-        frames = []
-        for gw in range(1, max_gw + 1):
-            url = f"{GITHUB_BASE}/2025-2026/By Gameweek/GW{gw}/{filename}"
-            cache_file = _cache_path(f"2025-2026_gw{gw}_{filename}")
+    if layout == LAYOUT_FLAT:
+        for key, path in FLAT_FILES.items():
+            url = f"{GITHUB_BASE}/{season}/{path}"
+            cache_file = _cache_path(f"{season}_{key}.csv")
             try:
-                df = _fetch_csv(url, cache_file, force=force)
-                if "gameweek" not in df.columns:
-                    df["gameweek"] = gw
-                frames.append(df)
-            except requests.HTTPError:
-                pass  # GW not available yet
-        if frames:
-            data[key] = pd.concat(frames, ignore_index=True)
+                data[key] = _fetch_csv(url, cache_file, force=force)
+            except requests.HTTPError as e:
+                print(f"  Warning: could not fetch {season}/{key}: {e}")
+    else:
+        for key, path in PER_GW_ROOT_FILES.items():
+            url = f"{GITHUB_BASE}/{season}/{path}"
+            cache_file = _cache_path(f"{season}_{key}.csv")
+            try:
+                data[key] = _fetch_csv(url, cache_file, force=force)
+            except requests.HTTPError as e:
+                print(f"  Warning: could not fetch {season}/{key}: {e}")
+
+        max_gw = _detect_max_gw(season, force=force)
+        print(f"  {season}: detected {max_gw} gameweeks")
+
+        for filename in PER_GW_GW_FILES:
+            key = filename.replace(".csv", "")
+            frames = []
+            for gw in range(1, max_gw + 1):
+                url = f"{GITHUB_BASE}/{season}/By Gameweek/GW{gw}/{filename}"
+                cache_file = _cache_path(f"{season}_gw{gw}_{filename}")
+                try:
+                    df = _fetch_csv(url, cache_file, force=force)
+                    if "gameweek" not in df.columns:
+                        df["gameweek"] = gw
+                    frames.append(df)
+                except requests.HTTPError:
+                    pass
+            if frames:
+                data[key] = pd.concat(frames, ignore_index=True)
 
     return data
 
@@ -180,16 +205,26 @@ def fetch_2526_data(force: bool = False) -> dict[str, pd.DataFrame]:
 def load_all_data(force: bool = False) -> dict:
     """Main entry point: fetch everything.
 
-    Returns dict with keys:
-        '2425' -> dict of DataFrames for 2024-2025
-        '2526' -> dict of DataFrames for 2025-2026
-        'api'  -> dict with 'bootstrap' and 'fixtures'
+    Returns dict keyed by season label (e.g. '2024-2025') plus:
+        'api'            -> dict with 'bootstrap' and 'fixtures'
+        'current_season' -> str like '2025-2026'
+        'seasons'        -> list of all seasons, oldest first
     """
-    print("Fetching 2024-2025 data...")
-    data_2425 = fetch_2425_data(force=force)
-    print("Fetching 2025-2026 data...")
-    data_2526 = fetch_2526_data(force=force)
     print("Fetching FPL API data...")
     api_data = {ep: fetch_fpl_api(ep, force=force) for ep in FPL_API_ENDPOINTS}
+
+    current = detect_current_season(api_data.get("bootstrap"))
+    seasons = get_all_seasons(current)
+
+    result = {"api": api_data, "current_season": current, "seasons": seasons}
+
+    for season in seasons:
+        print(f"Fetching {season} data...")
+        try:
+            result[season] = fetch_season_data(season, force=force)
+        except Exception as e:
+            print(f"  Skipping {season}: {e}")
+            result[season] = {}
+
     print("Data loading complete.")
-    return {"2425": data_2425, "2526": data_2526, "api": api_data}
+    return result

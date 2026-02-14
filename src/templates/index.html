@@ -1702,6 +1702,10 @@ function loadModelInfo() {
       if (players.length) renderTable();
     }
 
+    // Season info
+    window._currentSeason = d.current_season || '2025-2026';
+    window._availableSeasons = d.available_seasons || ['2024-2025', '2025-2026'];
+
     // Cache badge
     const badge = document.getElementById('cacheBadge');
     if (d.cache_age_seconds !== null) {
@@ -2065,7 +2069,7 @@ function lockInTeam() {
       players: lastBestTeamResult.players,
       budget: lastBestTeamResult.budget,
       target: lastBestTeamResult.target,
-      season: '2025-2026',
+      season: window._currentSeason,
       gameweek: nextGW,
     }),
   }).then(r => r.json()).then(d => {
@@ -2094,7 +2098,7 @@ function runBacktest() {
 
   const payload = { start_gw: startGW, end_gw: endGW };
   if (multiSeason) {
-    payload.seasons = ['2024-2025', '2025-2026'];
+    payload.seasons = window._availableSeasons;
   }
 
   fetch('/api/backtest', {
@@ -2289,7 +2293,7 @@ function loadLockInInfo() {
   infoSpan.textContent = '';
 
   fetch('/api/locked-teams').then(r => r.json()).then(d => {
-    const key = `2025-2026_GW${gw}`;
+    const key = `${window._currentSeason}_GW${gw}`;
     const entry = (d.teams || {})[key];
     if (entry) {
       infoSpan.style.color = 'var(--green)';
@@ -2310,7 +2314,7 @@ function runGWCompare() {
   fetch('/api/gw-compare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ season: '2025-2026', gameweek }),
+    body: JSON.stringify({ season: window._currentSeason, gameweek }),
   }).then(r => r.json()).then(d => {
     if (d.error) {
       document.getElementById('cmpContent').innerHTML =

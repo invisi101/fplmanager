@@ -330,8 +330,9 @@ def build_preseason_predictions(
     Adds price-based heuristics for new players (not in last season).
     """
     from src.model import CURRENT_SEASON
+    from src.data_fetcher import get_previous_season
 
-    prev_season = "2024-2025"
+    prev_season = get_previous_season(CURRENT_SEASON)
     prev_gw38 = df[(df["season"] == prev_season) & (df["gameweek"] == 38)]
     if prev_gw38.empty:
         # Fall back to whatever is the latest available data

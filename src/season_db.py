@@ -30,7 +30,7 @@ class SeasonDB:
                 manager_id INTEGER NOT NULL,
                 manager_name TEXT,
                 team_name TEXT,
-                season_name TEXT NOT NULL DEFAULT '2025-2026',
+                season_name TEXT NOT NULL,
                 start_gw INTEGER NOT NULL DEFAULT 1,
                 current_gw INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -146,8 +146,11 @@ class SeasonDB:
     # -----------------------------------------------------------------------
 
     def create_season(self, manager_id: int, manager_name: str = "",
-                      team_name: str = "", season_name: str = "2025-2026",
+                      team_name: str = "", season_name: str = "",
                       start_gw: int = 1) -> int:
+        if not season_name:
+            from src.data_fetcher import detect_current_season
+            season_name = detect_current_season()
         conn = self._conn()
         cur = conn.execute(
             """INSERT OR REPLACE INTO season
@@ -160,7 +163,10 @@ class SeasonDB:
         conn.close()
         return season_id
 
-    def get_season(self, manager_id: int, season_name: str = "2025-2026") -> dict | None:
+    def get_season(self, manager_id: int, season_name: str = "") -> dict | None:
+        if not season_name:
+            from src.data_fetcher import detect_current_season
+            season_name = detect_current_season()
         conn = self._conn()
         row = conn.execute(
             "SELECT * FROM season WHERE manager_id=? AND season_name=?",
@@ -169,7 +175,10 @@ class SeasonDB:
         conn.close()
         return dict(row) if row else None
 
-    def delete_season(self, manager_id: int, season_name: str = "2025-2026"):
+    def delete_season(self, manager_id: int, season_name: str = ""):
+        if not season_name:
+            from src.data_fetcher import detect_current_season
+            season_name = detect_current_season()
         conn = self._conn()
         conn.execute(
             "DELETE FROM season WHERE manager_id=? AND season_name=?",

@@ -864,15 +864,18 @@ def build_features(data: dict) -> pd.DataFrame:
     """Main entry point: build the full feature matrix from raw data.
 
     Args:
-        data: dict from load_all_data() with keys '2425', '2526', 'api'
+        data: dict from load_all_data() with season keys, 'api', 'current_season', 'seasons'
 
     Returns:
         DataFrame with one row per player per gameweek, including features and targets.
     """
     all_frames = []
 
-    for season_key, season_label in [("2425", "2024-2025"), ("2526", "2025-2026")]:
-        season = data[season_key]
+    current_season = data.get("current_season", "2025-2026")
+    seasons = data.get("seasons", [current_season])
+
+    for season_label in seasons:
+        season = data.get(season_label, {})
         if not season:
             continue
 
@@ -975,9 +978,9 @@ def build_features(data: dict) -> pd.DataFrame:
 
         # Supplement fixture map with future fixtures from FPL API so that
         # the next-GW shift has data at the latest gameweek.
-        # Only for current season — API data is 2025-2026 only.
+        # Only for current season — API data is for the current season only.
         api_fixtures_raw = data["api"].get("fixtures", [])
-        if api_fixtures_raw and team_id_to_code and season_label == "2025-2026":
+        if api_fixtures_raw and team_id_to_code and season_label == current_season:
             future_rows = []
             existing_keys = set()
             if not fixture_map.empty:
@@ -1013,8 +1016,8 @@ def build_features(data: dict) -> pd.DataFrame:
         # 7. Elo ratings
         elo = _build_elo_features(teams)
 
-        # 8. FDR from API (current season only — API has 2025-2026 data)
-        if season_label == "2025-2026":
+        # 8. FDR from API (current season only)
+        if season_label == current_season:
             api_fixtures = data["api"].get("fixtures", [])
             fdr_map = _build_fdr_map(api_fixtures)
         else:
@@ -1349,7 +1352,8 @@ def get_fixture_context(data: dict) -> dict:
       - elo: DataFrame(team_code, team_elo)
       - opp_rolling: DataFrame(opponent_code, gameweek, opp_* columns)
     """
-    season = data["2526"]
+    current_season = data.get("current_season", "2025-2026")
+    season = data.get(current_season, {})
     matches = season.get("matches", pd.DataFrame())
     teams_df = season.get("teams", pd.DataFrame())
     team_id_to_code = _build_team_id_to_code_map(teams_df) if not teams_df.empty else {}

@@ -24,8 +24,17 @@ POSITION_GROUPS = ["GKP", "DEF", "MID", "FWD"]
 TARGETS = ["next_gw_points", "next_3gw_points"]
 
 MIN_TRAIN_GWS = 10
-CURRENT_SEASON = "2025-2026"
-PREV_SEASON_WEIGHT = 0.5
+
+from src.data_fetcher import detect_current_season
+CURRENT_SEASON = detect_current_season()
+
+
+def _season_weight(season: str, current: str) -> float:
+    """Weight: 1.0 for current, 0.5 for previous, 0.25 for two back, etc."""
+    cur_year = int(current.split("-")[0])
+    s_year = int(season.split("-")[0])
+    age = cur_year - s_year  # 0 for current, 1 for prev, 2 for two back
+    return 0.5 ** age
 
 # Default feature sets per position if feature selection hasn't been run
 # These will be overridden by actual feature selection results
@@ -284,10 +293,8 @@ def train_model(
 
     print(f"    {position}/{target}: {len(pos_df)} rows, {len(available_feats)} features")
 
-    # Season-based sample weights: down-weight previous season data
-    pos_df["_sample_weight"] = np.where(
-        pos_df["season"] == CURRENT_SEASON, 1.0, PREV_SEASON_WEIGHT
-    )
+    # Season-based sample weights: graduated decay (current=1.0, prev=0.5, etc.)
+    pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
 
     # Sort by time for temporal ordering
     season_order = sorted(pos_df["season"].unique())
@@ -546,10 +553,8 @@ def train_quantile_model(
     suffix = f"_q{int(quantile_alpha * 100)}"
     print(f"    {position}/{target}{suffix}: {len(pos_df)} rows, {len(available_feats)} features")
 
-    # Season-based sample weights
-    pos_df["_sample_weight"] = np.where(
-        pos_df["season"] == CURRENT_SEASON, 1.0, PREV_SEASON_WEIGHT
-    )
+    # Season-based sample weights: graduated decay
+    pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
 
     # Walk-forward validation
     maes = []
@@ -771,9 +776,7 @@ def train_sub_model(
 
     print(f"    {position}/sub_{component}: {len(pos_df)} rows, {len(available_feats)} features")
 
-    pos_df["_sample_weight"] = np.where(
-        pos_df["season"] == CURRENT_SEASON, 1.0, PREV_SEASON_WEIGHT
-    )
+    pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
 
     X_all = pos_df[available_feats].values
     y_all = pos_df[target].values

@@ -11,12 +11,12 @@ from src.model import (
     DEFAULT_FEATURES,
     FPL_SCORING,
     POSITION_GROUPS,
-    PREV_SEASON_WEIGHT,
     SUB_MODEL_COMPONENTS,
     SUB_MODEL_FEATURES,
     SUB_MODEL_OBJECTIVES,
     SUB_MODELS_FOR_POSITION,
     _prepare_position_data,
+    _season_weight,
     predict_for_position,
 )
 
@@ -56,9 +56,7 @@ def _train_backtest_model(
         return None
 
     # Season-based sample weights
-    pos_df["_sample_weight"] = np.where(
-        pos_df["season"] == CURRENT_SEASON, 1.0, PREV_SEASON_WEIGHT
-    )
+    pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
 
     X = pos_df[available_feats].values
     y = pos_df[target].values
@@ -103,9 +101,7 @@ def _train_backtest_sub_models(
             pos_df = pos_df[pos_df["next_gw_minutes"] > 0].copy()
         if len(pos_df) < 30:
             continue
-        pos_df["_sample_weight"] = np.where(
-            pos_df["season"] == CURRENT_SEASON, 1.0, PREV_SEASON_WEIGHT
-        )
+        pos_df["_sample_weight"] = pos_df["season"].apply(lambda s: _season_weight(s, CURRENT_SEASON))
         X = pos_df[available_feats].values
         y = pos_df[target].values
         w = pos_df["_sample_weight"].values
@@ -607,7 +603,7 @@ def run_backtest(
     df: pd.DataFrame,
     start_gw: int = 5,
     end_gw: int = 25,
-    season: str = "2025-2026",
+    season: str = "",
     seasons: list[str] | None = None,
     print_fn=print,
 ) -> dict:
@@ -627,6 +623,9 @@ def run_backtest(
     if seasons:
         season_list = seasons
     else:
+        if not season:
+            from src.data_fetcher import detect_current_season
+            season = detect_current_season()
         season_list = [season]
 
     # Collect gameweek results across all seasons
