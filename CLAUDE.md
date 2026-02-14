@@ -136,8 +136,8 @@ Evaluates all 4 chips (BB, TC, FH, WC) across every remaining GW:
 
 ### MultiWeekPlanner
 Rolling **5-GW** transfer planner:
-- Forward simulation: tries each FT allocation for GW+1, picks path maximizing total points
-- Considers: FT banking (save → use 2 next week), fixture swings, price change probability
+- Tree search: generates all valid FT allocation sequences across the full 5-GW horizon, simulates each, picks the path maximizing total points
+- Considers: FT banking (save vs spend at every GW), fixture swings, price change probability
 - Reduces pool to top 200 players for efficiency
 - Passes `captain_col` to MILP solver for captain-aware squad building
 
@@ -324,142 +324,50 @@ All phases from the original roadmap are done:
 
 ---
 
-## PRIORITY FIX: Confirmed Bugs (Audit Feb 2025)
+## FPL Rules Reference
 
-A comprehensive audit found the following confirmed bugs. They are ordered by severity. Each should be confirmed by reading the cited lines before fixing. **Do not attempt to fix all of these at once** — work through them in priority order, testing each fix before moving on.
+Key FPL rules that affect the codebase logic:
 
-### CRITICAL — Silently producing wrong results now
+- **Free Transfers (FTs)**: You get 1 FT per GW. Unused FTs roll over, max 5 banked. Using more than your FTs costs -4 pts each.
+- **Wildcard**: Unlimited transfers for one GW. Squad changes are permanent. **FTs are preserved** — you keep the same FT count you had before playing the chip.
+- **Free Hit**: Unlimited transfers for one GW. Squad reverts to pre-FH squad the following GW. **FTs are preserved** — same count as before the chip.
+- **Bench Boost**: All 15 players score (not just starting 11). One GW only.
+- **Triple Captain**: Captain scores 3× instead of 2×. One GW only.
+- **Half-season reset**: WC and FH are available once per half (GW1-19 and GW20-38). BB and TC are one-time only.
+- **Captain**: Doubles the selected player's points. Vice-captain scores double if captain doesn't play.
+- **DGW/BGW**: Double Gameweek = team plays twice (points from both matches summed). Blank Gameweek = team doesn't play.
 
-**Bug 1: Outcome tracking always reports 100% transfer compliance**
-- **File**: `season_manager.py:844`
-- **Problem**: `transfers_json` is stored as `[{"out": {...}, "in": {...}}, ...]` (paired format), but the parsing iterates the top-level list and checks `t.get("direction")` which doesn't exist at that level. `rec_in_ids` is always empty → `followed_transfers` is always 1.
-- **Fix**: Extract from nested structure: `rec_in_ids = {t["in"]["player_id"] for t in rec_transfers if t.get("in", {}).get("player_id")}`
+---
 
-**Bug 2: Chip follow-through is hardcoded to 0**
-- **File**: `season_manager.py:853`
-- **Problem**: `followed_chip=0` is always passed. The actual chip used (`chip_map.get(current_event)`) and recommended chip (`rec.get("chip_suggestion")`) are both available but never compared.
-- **Fix**: Compare them: `followed_chip = 1 if chip_map.get(current_event) == rec.get("chip_suggestion") else 0`
+## Bugs Fixed (Audit Feb 2025)
 
-**Bug 3: Re-initializing a season CASCADE deletes all history**
-- **File**: `season_db.py:156`
-- **Problem**: `create_season()` uses `INSERT OR REPLACE` which in SQLite is DELETE + INSERT. Since `id` is AUTOINCREMENT, the replaced row gets a new ID, cascading deletes across all 7 child tables (snapshots, recommendations, outcomes, prices, plans, changelog).
-- **Fix**: Use `INSERT ... ON CONFLICT` to preserve the existing `id`, or check-then-insert:
-- **Current code** (`season_db.py:155-163`):
-  ```python
-  cur = conn.execute(
-      """INSERT OR REPLACE INTO season
-         (manager_id, manager_name, team_name, season_name, start_gw, current_gw)
-         VALUES (?, ?, ?, ?, ?, ?)""",
-      (manager_id, manager_name, team_name, season_name, start_gw, start_gw),
-  )
-  season_id = cur.lastrowid
-  ```
-- **Fixed code**:
-  ```python
-  cur = conn.execute(
-      """INSERT INTO season
-         (manager_id, manager_name, team_name, season_name, start_gw, current_gw)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(manager_id, season_name) DO UPDATE SET
-           manager_name=excluded.manager_name,
-           team_name=excluded.team_name""",
-      (manager_id, manager_name, team_name, season_name, start_gw, start_gw),
-  )
-  season_id = cur.lastrowid or conn.execute(
-      "SELECT id FROM season WHERE manager_id=? AND season_name=?",
-      (manager_id, season_name),
-  ).fetchone()[0]
-  ```
-  Note: `lastrowid` is 0 on conflict/update, so the fallback SELECT is needed.
+Bugs 1-13 have been fixed. Here's what was wrong and what changed:
 
-**Bug 4: Opponent history feature has data leakage**
-- **File**: `feature_engineering.py:316-330`
-- **Problem**: `_build_opponent_history_features` computes expanding means without `shift(1)`. Every other rolling feature in the file uses `shift(1)`. When predicting GW N+1 against opponent X, the feature can include GW N's actual match stats against X if GW N's opponent was also X (e.g., second meeting in same season).
-- **Fix**: Add `.shift(1)` before `.expanding()` like every other rolling feature.
+### CRITICAL — Fixed
 
-### HIGH — Strategy/solver logic errors affecting recommendations
+- **Bug 1**: Outcome tracking transfer compliance (`season_manager.py`) — was parsing wrong JSON structure, always reported 100% compliance. Fixed to extract from nested `{"in": {...}, "out": {...}}` format.
+- **Bug 2**: Chip follow-through (`season_manager.py`) — was hardcoded to 0. Now compares actual chip played vs recommended.
+- **Bug 3**: Season re-init CASCADE delete (`season_db.py`) — `INSERT OR REPLACE` deleted all child table data. Changed to `INSERT ... ON CONFLICT DO UPDATE` to preserve existing row ID.
+- **Bug 4**: Opponent history data leakage (`feature_engineering.py`) — expanding means lacked `shift(1)`, could see current match result. Added shift.
 
-**Bug 5: Captain bonus massively undervalued in MILP**
-- **File**: `solver.py:46-48` (also `solver.py:209-212`)
-- **Problem**: Captain bonus in objective = `captain_score - pred` (~1-2 pts extra). But in FPL, captaincy doubles points — the real bonus is `pred` itself (~5-8 pts). The solver treats captaincy as nearly irrelevant to squad building. The objective for a captained starter is `pred + (captain_score - pred) = captain_score`, which is only ~7 pts instead of `pred + pred = ~12 pts`.
-- **Fix**: Use `captain_score` directly as the bonus coefficient. This must be changed in both `solve_milp_team` AND `solve_transfer_milp`.
-- **Current code** (appears twice — `solver.py:47-48` and `solver.py:211-212`):
-  ```python
-  captain_bonus = captain_scores - pred  # Extra value from captaining
-  captain_bonus = np.maximum(captain_bonus, 0)  # Only positive bonus
-  ```
-- **Fixed code** (replace in both locations):
-  ```python
-  captain_bonus = captain_scores  # Captain doubles points; bonus = full captain_score
-  ```
-  This makes the total objective for a captained starter: `0.9*pred + captain_score`, properly valuing the captain pick. The `np.maximum` clamp is no longer needed since captain_scores are always non-negative.
+### HIGH — Strategy/solver — Fixed
 
-**Bug 6: Budget lost between multi-week planning steps**
-- **File**: `strategy.py:545,647` and `season_manager.py:1493`
-- **Problem**: After each MILP solve, `budget = result["total_cost"]` (squad cost). Unspent bank is discarded. If solver picks a 98.5m squad with 102m available, 3.5m disappears.
-- **Fix**: Don't reassign budget — it should stay as the manager's total available funds (bank + squad value), which doesn't change just because the solver picked a cheaper squad.
+- **Bug 5**: Captain bonus undervalued in MILP (`solver.py`) — bonus was `captain_score - pred` (tiny). Changed to full `captain_score` (captain doubles points).
+- **Bug 6**: Budget lost between multi-week steps (`strategy.py`, `season_manager.py`) — was replacing budget with squad cost after each solve. Now carries `total_budget` forward.
+- **Bug 7**: Free Hit used hardcoded 1000 budget (`strategy.py`, `season_manager.py`) — now uses actual `total_budget`.
+- **Bug 8+FT rule**: FTs after WC/FH (`strategy.py`, `season_manager.py`) — was resetting FTs to 1 after FH and accruing +1 after WC. FPL rule: FTs are preserved at pre-chip count. Fixed in `_simulate_path`, `_generate_ft_plans`, and `_calculate_free_transfers`.
+- **Bug 9**: Injured players as captain (`strategy.py`) — `apply_availability_adjustments()` now zeros `captain_score` and `predicted_next_gw_points_q80` alongside `predicted_points`.
+- **Bug 10**: Multi-week planner only optimized GW1 (`strategy.py`) — replaced greedy `min(ft, 2)` for GW2+ with full tree search via `_generate_ft_plans()`. Explores all valid FT allocation sequences (typically 100-750 plans), evaluates each, picks best total. Handles save-vs-spend decisions and 3+ banked FTs across full horizon.
 
-**Bug 7: Free Hit evaluation uses unlimited budget**
-- **File**: `strategy.py:205` and `season_manager.py:1429`
-- **Problem**: FH evaluation uses `budget=1000` (100m) instead of the manager's actual squad value + bank. Inflates FH value for managers under 100m, understates for managers over 100m.
-- **Fix**: Pass `total_budget` (already available as a parameter) instead of hardcoded 1000.
+### HIGH — Feature engineering — Fixed
 
-**Bug 8: FT count not reset after Free Hit**
-- **File**: `strategy.py:549`
-- **Problem**: After FH in simulation, FTs accumulate normally (`ft = min(ft + 1, 5)`). In FPL, after a Free Hit, FTs reset to 1.
-- **Fix**: Set `ft = 1` after a Free Hit GW.
+- **Bug 11**: Cross-season decay disabled (`feature_engineering.py`) — raw GW numbers reset each season, making distance negative → decay = 1.0. Fixed with monotonic `_global_gw = season_order * 38 + gameweek`.
+- **Bug 12**: DGW rolling stats averaged (`feature_engineering.py`) — `.mean()` made DGW output identical to single-match. Changed to `.sum()` across all 5 aggregation points (player rolling, EWM, upside, opponent rolling, own-team rolling).
+- **Bug 13**: rest_days off by one GW (`feature_engineering.py`) — feature row at GW N got rest before GW N, not GW N+1. Fixed by shifting rest_days gameweek by -1 before merge.
 
-**Bug 9: Injured players can be recommended as captain**
-- **File**: `strategy.py:1091`
-- **Problem**: `apply_availability_adjustments()` zeros `predicted_points` but not `captain_score`. The MILP solver uses `captain_score` for captain selection, so an injured player can still be picked.
-- **Fix**: Also zero `captain_score` (and `predicted_next_gw_points_q80` if present) for injured/unavailable players.
+**Note**: Bugs 11-13 change feature values. Models should be retrained after these fixes.
 
-**Bug 10: Multi-week planner only truly optimizes GW1**
-- **File**: `strategy.py:572-573`
-- **Problem**: For GW2-5, the planner always uses `min(ft, 2)` transfers greedily. It never considers saving FTs in GW2 for a bigger move in GW3, or using 3+ accumulated FTs.
-- **Scope**: This is an algorithmic limitation, not a simple bug. A proper fix would require tree search or dynamic programming across the full horizon. Consider whether the current greedy approach is "good enough" or worth the complexity of a proper search.
-
-### HIGH — Feature engineering errors affecting model quality
-
-**Bug 11: Cross-season decay is completely disabled**
-- **File**: `feature_engineering.py:1268-1272`
-- **Problem**: Decay distance uses raw gameweek numbers which reset each season. GW1 of new season minus GW38 of old season = -37, clipped to 0, so decay = 0.90^0 = 1.0 (no decay at all). Carried-over values enter the new season at full strength.
-- **Fix**: Create a monotonically increasing row counter so distance is always positive across seasons.
-- **Current code** (`feature_engineering.py:1268-1272`):
-  ```python
-  last_real_gw = group_df.groupby(group_col)["gameweek"].transform(
-      lambda s: s.where(group_df.loc[s.index, col].notna()).ffill()
-  )
-  distance = group_df["gameweek"] - last_real_gw
-  decay = CROSS_SEASON_DECAY ** distance.clip(lower=0)
-  ```
-- **Fixed code**: Add a `gw_index` column before the `_ffill_with_decay` call (around line 1248) that increases monotonically across seasons, then use it instead of `gameweek`:
-  ```python
-  # Add monotonic GW counter before calling _ffill_with_decay
-  season_order = {s: i for i, s in enumerate(sorted(combined["season"].unique()))}
-  combined["_gw_index"] = combined["season"].map(season_order) * 38 + combined["gameweek"]
-  ```
-  Then inside `_ffill_with_decay`, replace `"gameweek"` with `"_gw_index"` in the distance calc:
-  ```python
-  last_real_gw = group_df.groupby(group_col)["_gw_index"].transform(
-      lambda s: s.where(group_df.loc[s.index, col].notna()).ffill()
-  )
-  distance = group_df["_gw_index"] - last_real_gw
-  decay = CROSS_SEASON_DECAY ** distance.clip(lower=0)
-  ```
-  Distance from GW38 of season 0 to GW1 of season 1 becomes `(1*38+1) - (0*38+38) = 1`, giving decay = 0.90. By GW5, decay = 0.90^5 = 0.59.
-
-**Bug 12: DGW rolling stats use mean instead of sum**
-- **File**: `feature_engineering.py:44,77,110` (also 219, 244 for team features)
-- **Problem**: DGW match stats are averaged before entering rolling windows. A player with 0.8 + 0.5 xG across a DGW gets 0.65 — identical to a single-match 0.65. Systematically undervalues productive DGWs in form signals.
-- **Fix**: Use `.sum()` instead of `.mean()` for per-GW aggregation of DGW stats, matching how targets work. Alternatively, keep per-match rows in rolling calculations.
-
-**Bug 13: rest_days feature is off by one GW**
-- **File**: `feature_engineering.py:1134-1138`
-- **Problem**: Feature row at GW N (predicting GW N+1) contains rest days before GW N, not before GW N+1. All other "next GW" features are correctly shifted.
-- **Fix**: Apply the same `gameweek - 1` shift to rest_days before merging, or compute rest for the next GW directly.
-
-### MEDIUM — Functional issues that degrade quality
+### MEDIUM — Remaining (unfixed)
 
 **Bug 14: Dashboard chip status ignores half-season reset**
 - **File**: `season_manager.py:1808-1824`
@@ -478,7 +386,7 @@ A comprehensive audit found the following confirmed bugs. They are ordered by se
 
 **Bug 17: Stale event_points in record_results**
 - **File**: `season_manager.py:776`
-- **Problem**: Per-player `event_points` comes from bootstrap cache which may not have been refreshed. The overall points comparison uses live data, but per-player scores in the stored squad snapshot can be wrong.
+- **Problem**: Per-player `event_points` comes from bootstrap cache which may not have been refreshed.
 - **Fix**: Force bootstrap refresh at start of `record_actual_results()`, or use live history data.
 
 **Bug 18: Historical backfill stores current prices**
@@ -492,16 +400,7 @@ A comprehensive audit found the following confirmed bugs. They are ordered by se
 
 **Bug 20: BB evaluates current squad for all future GWs**
 - **File**: `strategy.py:128-149`
-- **Problem**: BB value is calculated using today's bench for every remaining GW. For a BB in GW35, evaluation is meaningless since the squad will have changed. The WC→BB synergy uses a crude 30% uplift heuristic instead of solving the actual WC-optimized squad's bench.
-
-### Advice for fixing session
-
-1. **Confirm each bug first** — read the exact lines cited, understand the surrounding code, and verify the issue is real before changing anything.
-2. **Start with Bugs 1-3** (critical) — these are simple fixes with the highest impact. Bug 1 is a one-line JSON parsing fix. Bug 3 requires changing the SQL strategy. Bug 4 requires adding `shift(1)`.
-3. **Bugs 5-9** (high severity strategy) are all independent — they can be fixed in any order. Bug 5 (captain bonus) is the most impactful for recommendation quality.
-4. **Bugs 11-13** (feature engineering) require retraining after fixing. Fix all three, then retrain.
-5. **Test after each fix** — start the server, run the test commands above, check that nothing breaks.
-6. **Do NOT attempt to fix Bug 10** (multi-week planner optimization) unless specifically asked — it's a significant algorithmic redesign.
+- **Problem**: BB value is calculated using today's bench for every remaining GW. The WC→BB synergy uses a crude 30% uplift heuristic instead of solving the actual WC-optimized squad's bench.
 
 ---
 
