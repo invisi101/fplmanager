@@ -1,7 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-xgb_datas, xgb_binaries, xgb_hiddenimports = collect_all("xgboost")
+xgb_datas, xgb_binaries, xgb_hiddenimports = collect_all(
+    "xgboost",
+    filter_submodules=lambda name: "testing" not in name,
+)
 
 a = Analysis(
     ["launcher.py"],
