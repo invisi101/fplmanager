@@ -27,7 +27,17 @@ Built with Python, Flask, scipy MILP, and a single-file vanilla JS frontend.
 
 No Python installation required.
 
-### Mac / Linux (from source)
+### Mac
+
+```bash
+git clone https://github.com/invisi101/fplmanager.git
+cd fplmanager
+./setup-mac.sh
+```
+
+This creates a virtual environment, installs dependencies, and installs **Gaffer.app** to your Applications folder. Launch it from Spotlight, Launchpad, or the Applications folder — the app opens in your browser automatically.
+
+### Linux
 
 ```bash
 git clone https://github.com/invisi101/fplmanager.git
