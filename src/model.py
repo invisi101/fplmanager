@@ -648,11 +648,11 @@ SUB_MODEL_COMPONENTS = {
 }
 
 # XGBoost objective per sub-model component.
-# Poisson for count data, logistic for binary.
+# Poisson for count data, squarederror for clean sheets (fractional DGW targets).
 SUB_MODEL_OBJECTIVES = {
     "goals": "count:poisson",
     "assists": "count:poisson",
-    "cs": "binary:logistic",
+    "cs": "reg:squarederror",
     "bonus": "count:poisson",
     "goals_conceded": "count:poisson",
     "saves": "count:poisson",

@@ -181,16 +181,22 @@ def solve_milp_team(
     # Include captain bonus in starting_points (captain doubles their points)
     base_pts = starters[target_col].sum()
     captain_pts = 0
+    captain_opt_pts = 0  # Upside-weighted score used by the optimization objective
     if captain_id and "player_id" in starters.columns:
         cap_match = starters.loc[starters["player_id"] == captain_id, target_col]
         if not cap_match.empty:
             captain_pts = cap_match.iloc[0]
+        if use_captain and captain_col and captain_col in starters.columns:
+            cap_score = starters.loc[starters["player_id"] == captain_id, captain_col]
+            if not cap_score.empty:
+                captain_opt_pts = cap_score.iloc[0]
 
     return {
         "starters": scrub_nan(starters.to_dict(orient="records")),
         "bench": scrub_nan(bench.to_dict(orient="records")),
         "total_cost": round(team_df["cost"].sum(), 1),
         "starting_points": round(base_pts + captain_pts, 2),
+        "optimization_score": round(base_pts + captain_opt_pts, 2) if captain_opt_pts else None,
         "players": scrub_nan(team_df.to_dict(orient="records")),
         "captain_id": captain_id,
     }
@@ -303,9 +309,13 @@ def solve_transfer_milp(
         ubs.append(0)
 
     # TRANSFER CONSTRAINT: keep at least (15 - max_transfers) current players
-    # Adjust for current players missing from pool (dropped by dropna)
+    # Adjust for current players missing from pool (dropped by dropna).
+    # Players missing from the pool require forced replacements that count
+    # against max_transfers so the total changes don't exceed the intent.
     current_in_pool = int(is_current.sum())
-    keep_min = max(0, current_in_pool - max_transfers)
+    forced_replacements = len(current_player_ids) - current_in_pool
+    effective_max = max(0, max_transfers - forced_replacements)
+    keep_min = max(0, current_in_pool - effective_max)
     add_constraint(np.concatenate([is_current, zeros]), keep_min, 15)
 
     # Captain constraints
@@ -378,10 +388,15 @@ def solve_transfer_milp(
     # Include captain bonus in starting_points (captain doubles their points)
     base_pts = starters[target_col].sum()
     captain_pts = 0
+    captain_opt_pts = 0
     if captain_id and "player_id" in starters.columns:
         cap_match = starters.loc[starters["player_id"] == captain_id, target_col]
         if not cap_match.empty:
             captain_pts = cap_match.iloc[0]
+        if use_captain and captain_col and captain_col in starters.columns:
+            cap_score = starters.loc[starters["player_id"] == captain_id, captain_col]
+            if not cap_score.empty:
+                captain_opt_pts = cap_score.iloc[0]
 
     return {
         "starters": scrub_nan(starters.to_dict(orient="records")),
@@ -389,7 +404,47 @@ def solve_transfer_milp(
         "players": scrub_nan(team_df.to_dict(orient="records")),
         "total_cost": round(team_df["cost"].sum(), 1),
         "starting_points": round(base_pts + captain_pts, 2),
+        "optimization_score": round(base_pts + captain_opt_pts, 2) if captain_opt_pts else None,
         "transfers_in_ids": transfers_in_ids,
         "transfers_out_ids": transfers_out_ids,
         "captain_id": captain_id,
     }
+
+
+def solve_transfer_milp_with_hits(
+    player_df: pd.DataFrame,
+    current_player_ids: set[int],
+    target_col: str,
+    budget: float = 1000.0,
+    free_transfers: int = 1,
+    max_transfers: int = 2,
+    team_cap: int = 3,
+    captain_col: str | None = None,
+    hit_cost: float = 4.0,
+) -> dict | None:
+    """Wrapper that accounts for -4 pt transfer hits.
+
+    Runs ``solve_transfer_milp`` for each candidate transfer count
+    (1 .. max_transfers), subtracts hit penalties for transfers exceeding
+    ``free_transfers``, and returns the result with the best net points.
+    """
+    best = None
+    best_net = -float("inf")
+    for n in range(1, max_transfers + 1):
+        result = solve_transfer_milp(
+            player_df, current_player_ids, target_col,
+            budget=budget, max_transfers=n,
+            team_cap=team_cap, captain_col=captain_col,
+        )
+        if result is None:
+            continue
+        actual = len(result["transfers_in_ids"])
+        hits = max(0, actual - free_transfers)
+        net = result["starting_points"] - hits * hit_cost
+        if net > best_net:
+            best_net = net
+            best = result
+            best["hits"] = hits
+            best["hit_cost"] = round(hits * hit_cost, 1)
+            best["net_points"] = round(net, 2)
+    return best

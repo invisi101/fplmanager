@@ -600,7 +600,8 @@ def api_best_team():
             lambda tc: fixture_map.get(tc, [""])[0] if fixture_map.get(tc) else ""
         )
 
-    result = _solve_milp_team(df, target, budget=budget)
+    captain_col_arg = "captain_score" if "captain_score" in df.columns else None
+    result = _solve_milp_team(df, target, budget=budget, captain_col=captain_col_arg)
     if result is None:
         return jsonify({"error": f"Could not find a valid team within budget {budget:.1f}. Try increasing the budget."})
 
@@ -824,11 +825,12 @@ def _calculate_free_transfers(history: dict) -> int:
         free_used = transfers_made - paid
 
         ft = ft - free_used
+        ft = max(ft, 0)  # Floor at 0 before accrual (consistent with season_manager)
 
         # Mid-season joiner: first GW's FT was consumed by team creation,
         # so don't bank it (skip the +1 roll for the debut GW).
         if i == 0 and first_event > 1:
-            ft = max(ft, 0)
+            pass  # ft already floored above, skip accrual for debut GW
         else:
             # After this GW, roll forward: gain 1, cap at 5
             ft = min(ft + 1, 5)

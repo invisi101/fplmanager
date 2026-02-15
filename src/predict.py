@@ -57,6 +57,8 @@ def _build_offset_snapshot(
     fixture_cols = [
         "opponent_code", "is_home", "fdr", "opponent_elo",
         "next_gw_fixture_count",
+        # Multi-GW lookahead features (stale for offset > 1, must be recomputed)
+        "avg_fdr_next3", "home_pct_next3", "avg_opponent_elo_next3",
         # Interaction features (will be recomputed)
         "xg_x_opp_goals_conceded", "chances_x_opp_big_chances",
         "cs_opportunity", "venue_matched_form",
@@ -156,6 +158,36 @@ def _build_offset_snapshot(
         snapshot["venue_matched_form"] = np.where(
             snapshot["is_home"] == 1, snapshot["home_xg_form"], snapshot["away_xg_form"]
         )
+
+    # Recompute multi-GW lookahead features relative to the target GW
+    ahead_gws = fixture_map[
+        (fixture_map["gameweek"] > target_gw) & (fixture_map["gameweek"] <= target_gw + 3)
+    ]
+    if not ahead_gws.empty:
+        for tc in snapshot["team_code"].unique():
+            team_ahead = ahead_gws[ahead_gws["team_code"] == tc]
+            mask = snapshot["team_code"] == tc
+            if not team_ahead.empty:
+                snapshot.loc[mask, "avg_fdr_next3"] = team_ahead.merge(
+                    fdr_map[fdr_map["gameweek"].isin(team_ahead["gameweek"].unique())][
+                        ["team_code", "gameweek", "opponent_code", "fdr"]
+                    ].dropna(subset=["fdr"]),
+                    on=["team_code", "gameweek", "opponent_code"], how="left"
+                )["fdr"].mean()
+                snapshot.loc[mask, "home_pct_next3"] = team_ahead["is_home"].mean()
+                if not elo.empty and "team_code" in elo.columns:
+                    opp_elo_map = dict(zip(elo["team_code"], elo["team_elo"]))
+                    snapshot.loc[mask, "avg_opponent_elo_next3"] = (
+                        team_ahead["opponent_code"].map(opp_elo_map).mean()
+                    )
+            else:
+                snapshot.loc[mask, "avg_fdr_next3"] = 3.0
+                snapshot.loc[mask, "home_pct_next3"] = 0.5
+                snapshot.loc[mask, "avg_opponent_elo_next3"] = 1500.0
+    # Fill any remaining NaN lookahead features with neutral defaults
+    snapshot["avg_fdr_next3"] = snapshot.get("avg_fdr_next3", pd.Series(3.0, index=snapshot.index)).fillna(3.0)
+    snapshot["home_pct_next3"] = snapshot.get("home_pct_next3", pd.Series(0.5, index=snapshot.index)).fillna(0.5)
+    snapshot["avg_opponent_elo_next3"] = snapshot.get("avg_opponent_elo_next3", pd.Series(1500.0, index=snapshot.index)).fillna(1500.0)
 
     return snapshot
 
@@ -281,8 +313,9 @@ def predict_future_gw(
 
     result = pd.concat(gw_preds, ignore_index=True)
 
-    # Apply confidence decay
-    confidence = 0.95 ** offset
+    # Apply confidence decay — offset 1 (immediate next GW) gets no discount,
+    # consistent with the standard 1-GW prediction path.
+    confidence = 0.95 ** (offset - 1)
     result["predicted_points"] = result["predicted_next_gw_points"] * confidence
     result["confidence"] = confidence
     result = result.drop(columns=["predicted_next_gw_points"])

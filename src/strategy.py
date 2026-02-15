@@ -196,8 +196,11 @@ class ChipEvaluator:
                     candidates = gw_df
                 if not candidates.empty:
                     # DGW value already captured in predicted_points (summed across fixtures)
+                    # Use captain_score to identify the best captain, but the TC chip value
+                    # is the extra predicted_points (one additional multiply: 3x instead of 2x).
                     score_col = "captain_score" if "captain_score" in candidates.columns else "predicted_points"
-                    best = candidates[score_col].max()
+                    best_idx = candidates[score_col].idxmax()
+                    best = candidates.loc[best_idx, "predicted_points"]
                     values[gw] = round(best, 1)
                 else:
                     values[gw] = 0.0
@@ -586,14 +589,22 @@ class MultiWeekPlanner:
 
     @staticmethod
     def _squad_points_with_captain(squad_preds):
-        """Compute starting XI points with captain bonus, respecting formation constraints."""
+        """Compute starting XI points with captain bonus, respecting formation constraints.
+
+        Uses captain_score (upside-weighted) for captain selection when available,
+        consistent with the MILP solver.  The bonus is the captain's predicted_points
+        (i.e. actual expected extra points from doubling).
+        """
         if len(squad_preds) < 11:
             return squad_preds["predicted_points"].sum() if not squad_preds.empty else 0
 
         top11 = MultiWeekPlanner._select_formation_xi(squad_preds)
         pts = top11["predicted_points"].sum()
-        # Add captain bonus: best predicted_points gets doubled (matches MILP solver)
-        captain_bonus = top11["predicted_points"].max()
+        # Use captain_score for selection (consistent with MILP), but bonus is
+        # the captain's predicted_points (expected value of doubling).
+        score_col = "captain_score" if "captain_score" in top11.columns else "predicted_points"
+        captain_idx = top11[score_col].idxmax()
+        captain_bonus = top11.loc[captain_idx, "predicted_points"]
         return pts + captain_bonus
 
     def _simulate_path(
@@ -700,6 +711,18 @@ class MultiWeekPlanner:
                 squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
                 pts = self._squad_points_with_captain(squad_preds)
 
+                # BB/TC chip adjustments
+                if gw_chip == "bboost" and len(squad_preds) >= 15:
+                    top11 = self._select_formation_xi(squad_preds)
+                    bench = squad_preds[~squad_preds.index.isin(top11.index)]
+                    pts += bench["predicted_points"].sum()
+                elif gw_chip == "3xc":
+                    # TC gives 3x instead of 2x — add one more captain's predicted_points
+                    score_col = "captain_score" if "captain_score" in squad_preds.columns else "predicted_points"
+                    if not squad_preds.empty:
+                        cap_idx = squad_preds[score_col].idxmax()
+                        pts += squad_preds.loc[cap_idx, "predicted_points"]
+
                 path.append({
                     "gw": gw,
                     "transfers_in": [],
@@ -708,6 +731,7 @@ class MultiWeekPlanner:
                     "ft_available": ft,
                     "predicted_points": round(pts, 2),
                     "squad_ids": list(squad_ids),
+                    "chip": gw_chip,
                 })
 
                 # Roll forward FTs
@@ -724,6 +748,21 @@ class MultiWeekPlanner:
                     )
                     if result:
                         pts = result["starting_points"]
+
+                        # BB/TC chip adjustments on transfer GWs
+                        if gw_chip == "bboost":
+                            bench_pts = sum(
+                                p.get("predicted_points", 0)
+                                for p in result.get("bench", [])
+                            )
+                            pts += bench_pts
+                        elif gw_chip == "3xc" and result.get("captain_id"):
+                            # TC: add one more captain's predicted_points (3x total)
+                            for p in result.get("starters", []):
+                                if p.get("player_id") == result["captain_id"]:
+                                    pts += p.get("predicted_points", 0)
+                                    break
+
                         new_squad_ids = {p["player_id"] for p in result["players"]}
                         transfers_out = squad_ids - new_squad_ids
                         transfers_in = new_squad_ids - squad_ids

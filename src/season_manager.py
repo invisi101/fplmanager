@@ -372,7 +372,14 @@ class SeasonManager:
 
         entry_hist = picks_data.get("entry_history", {})
         bank = entry_hist.get("bank", 0) / 10
-        total_budget = round(bank + current_squad_cost, 1)
+        # Use entry_history "value" (squad selling value) when available;
+        # this accounts for the 50% price-rise rule on selling.
+        # Fall back to sum(now_cost) if value is missing (slightly optimistic).
+        squad_value = entry_hist.get("value")
+        if squad_value:
+            total_budget = round(bank + squad_value / 10, 1)
+        else:
+            total_budget = round(bank + current_squad_cost, 1)
 
         target_col = "predicted_next_gw_points"
 
@@ -1591,7 +1598,8 @@ class SeasonManager:
 
         # Current XI points (week 1 baseline with 0 transfers)
         current_pred = pool[pool["player_id"].isin(current_squad_ids)]
-        current_xi_pts = current_pred.nlargest(11, gw_col)[gw_col].sum() if len(current_pred) >= 11 else 0
+        # Sum best available players (up to 11) rather than requiring exactly 11
+        current_xi_pts = current_pred.nlargest(min(11, len(current_pred)), gw_col)[gw_col].sum() if not current_pred.empty else 0
 
         # Simulate each strategy: use 0..min(ft, 3) FTs this week
         max_use = min(free_transfers, 3)
