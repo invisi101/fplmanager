@@ -2064,8 +2064,8 @@ function pickBestTeam() {
     // Summary with both targets
     const summary = document.getElementById('teamSummary');
     summary.innerHTML = `
-      <div class="summary-stat"><div class="label">XI Pred ${gwLabel}</div><div class="value">${d.starting_gw_points}</div></div>
-      <div class="summary-stat"><div class="label">XI Pred ${gw3Label}</div><div class="value">${d.starting_gw3_points}</div></div>
+      <div class="summary-stat"><div class="label">XI Pred ${gwLabel}</div><div class="value">${Number(d.starting_gw_points).toFixed(1)}</div></div>
+      <div class="summary-stat"><div class="label">XI Pred ${gw3Label}</div><div class="value">${Number(d.starting_gw3_points).toFixed(1)}</div></div>
       <div class="summary-stat"><div class="label">Total Cost</div><div class="value">${d.total_cost}</div></div>
       <div class="summary-stat"><div class="label">Remaining</div><div class="value green">${d.remaining}</div></div>
     `;
@@ -2282,8 +2282,8 @@ function renderMyTeam(d) {
   const curGwLabel = d.current_event ? `GW${d.current_event}` : 'Current GW';
   summary.innerHTML = `
     <div class="summary-stat"><div class="label">XI Actual ${curGwLabel}</div><div class="value" style="color:var(--orange)">${d.xi_actual_gw}</div></div>
-    <div class="summary-stat"><div class="label">XI Pred ${gwLabel}</div><div class="value">${d.xi_pred_gw}</div></div>
-    <div class="summary-stat"><div class="label">XI Pred ${gw3Label}</div><div class="value">${d.xi_pred_3gw}</div></div>
+    <div class="summary-stat"><div class="label">XI Pred ${gwLabel}</div><div class="value">${Number(d.xi_pred_gw).toFixed(1)}</div></div>
+    <div class="summary-stat"><div class="label">XI Pred ${gw3Label}</div><div class="value">${Number(d.xi_pred_3gw).toFixed(1)}</div></div>
     <div class="summary-stat"><div class="label">Squad Value</div><div class="value" style="color:var(--text)">${d.squad_value}m</div></div>
     <div class="summary-stat"><div class="label">Sell Value</div><div class="value" style="color:var(--text2)">${d.sell_value}m</div></div>
     <div class="summary-stat"><div class="label">Bank</div><div class="value green">${d.bank}m</div></div>
@@ -2458,12 +2458,12 @@ function renderTransfers(d) {
   const netStyle = d.net_gain >= 0 ? 'class="value green"' : 'class="value" style="color:var(--red)"';
 
   html += '<div class="team-summary">';
-  html += `<div class="summary-stat"><div class="label">Points Gained</div><div class="value green">+${d.points_gained}</div></div>`;
+  html += `<div class="summary-stat"><div class="label">Points Gained</div><div class="value green">+${Number(d.points_gained).toFixed(1)}</div></div>`;
   if (d.points_hit > 0) {
     html += `<div class="summary-stat"><div class="label">Points Hit</div><div class="value" style="color:var(--red)">-${d.points_hit}</div></div>`;
   }
-  html += `<div class="summary-stat"><div class="label">Net Gain</div><div ${netStyle}>${d.net_gain > 0 ? '+' : ''}${d.net_gain}</div></div>`;
-  html += `<div class="summary-stat"><div class="label">New XI Pred ${gwLabel}</div><div class="value">${d.new_xi_points}</div></div>`;
+  html += `<div class="summary-stat"><div class="label">Net Gain</div><div ${netStyle}>${d.net_gain > 0 ? '+' : ''}${Number(d.net_gain).toFixed(1)}</div></div>`;
+  html += `<div class="summary-stat"><div class="label">New XI Pred ${gwLabel}</div><div class="value">${Number(d.new_xi_points).toFixed(1)}</div></div>`;
   html += `<div class="summary-stat"><div class="label">Transfers</div><div class="value" style="color:var(--text)">${d.n_transfers}${d.wildcard ? ' (WC)' : ''}</div></div>`;
   html += `<div class="summary-stat"><div class="label">Budget Remaining</div><div class="value green">${d.bank_after}m</div></div>`;
   html += '</div>';
