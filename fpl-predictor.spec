@@ -16,7 +16,7 @@ a = Analysis(
         "src.model",
         "src.predict",
         "src.backtest",
-        "src.benchmark",
+        "src.strategy",
         "src.solver",
         "src.season_db",
         "src.season_manager",

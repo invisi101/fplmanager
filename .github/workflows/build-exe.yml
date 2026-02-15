@@ -1,0 +1,43 @@
+name: Build Windows EXE
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller fpl-predictor.spec
+
+      - name: Zip output folder
+        run: Compress-Archive -Path "dist/FPL Predictor" -DestinationPath FPL-Predictor-Windows.zip
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FPL-Predictor-Windows.zip
+
+      - name: Upload as artifact (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FPL-Predictor-Windows
+          path: FPL-Predictor-Windows.zip
