@@ -17,7 +17,17 @@ Built with Python, Flask, scipy MILP, and a single-file vanilla JS frontend.
 
 ---
 
-## Setup
+## Installation
+
+### Windows (standalone EXE)
+
+1. Download `FPL-Predictor-Windows.zip` from the [latest release](https://github.com/invisi101/fplmanager/releases/latest)
+2. Extract the zip
+3. Run `FPL Predictor.exe` — the app opens in your browser automatically
+
+No Python installation required.
+
+### Mac / Linux (from source)
 
 ```bash
 git clone https://github.com/invisi101/fplmanager.git
@@ -29,6 +39,7 @@ python -m src.app
 ```
 
 Open http://127.0.0.1:9875 in your browser.
+
 
 ---
 
