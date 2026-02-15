@@ -406,6 +406,64 @@ Bugs 1-36 have been fixed. Here's what was wrong and what changed:
 
 ---
 
+## Bugs Fixed (Third Audit, Feb 2025)
+
+31 bugs found (37-67). 26 fixed, 2 retracted as false positives, 3 documented as known limitations.
+
+### HIGH — Strategy/solver — Fixed
+
+- **Bug 37**: `solve_transfer_milp_with_hits()` never called — all callers (app.py, strategy.py, season_manager.py) now import and use the hits-aware wrapper. Fixed in previous session.
+- **Bug 38**: `solve_transfer_milp_with_hits()` missing 0-transfer baseline (`solver.py`) — added baseline that evaluates keeping squad unchanged before iterating transfer counts.
+- **Bug 39**: `optimization_score` falsy check (`solver.py`) — changed `if captain_opt_pts` to `if use_captain and captain_id` at both return sites.
+- **Bug 40**: Stale `captain_score` for future GWs (`season_manager.py`) — captain_score is GW+1 specific (uses Q80). For GW+2 onwards, now falls back to `predicted_points`.
+- **Bug 41**: Multi-week "bank FT" recommendation overridden (`season_manager.py`) — changed falsy `transfers_in` check to `elif multi_week_plan:`.
+
+### MEDIUM — Strategy/solver — Fixed
+
+- **Bug 48**: TC captain in no-transfer branch selected from full 15-man squad (`strategy.py`) — now selects from starting XI only via `_select_formation_xi()`.
+- **Bug 49**: Transfer-branch path entries missing `"chip"` key (`strategy.py`) — added `"chip": gw_chip` to transfer-branch `path.append()`.
+- **Bug 51**: Fallback solver missing captain optimization (`season_manager.py`) — now passes `captain_col` to fallback `solve_transfer_milp_with_hits()`.
+- **Bug 52**: BB evaluation returns 0 when <15 squad predictions (`season_manager.py`) — now sums best N available players instead of requiring exactly 15.
+- **Bug 55**: FH/WC chip evaluation lacks captain optimization (`season_manager.py`) — now passes `captain_col` to MILP solver in chip evaluation.
+- **Bug 66**: Solver-failed branch doesn't apply BB/TC effects (`strategy.py`) — added BB/TC point adjustments to fallback path entry + `"chip"` key.
+
+### MEDIUM — Feature engineering — Fixed
+
+- **Bug 45**: `get_feature_columns` includes cumulative season totals (`feature_engineering.py`) — added `influence`, `creativity`, `threat`, `ict_index`, `player_bps`, `player_bonus` to exclude set.
+- **Bug 46**: Cross-season decay gap = 1 GW instead of ~10-12 weeks (`feature_engineering.py`) — changed formula to `season_order * (38 + OFF_SEASON_GAP) + gameweek` with 10-week gap. Decay at GW1 = 0.90^11 ≈ 0.31 (was 0.90).
+
+### MEDIUM — App/database — Fixed
+
+- **Bug 53**: Dashboard chip status uses `current_gw` instead of `next_gw` (`season_manager.py`) — now uses `next_gw` for chip availability check.
+- **Bug 56**: Best-team `starting_gw_points` missing captain bonus (`app.py`) — already fixed before audit.
+- **Bug 57**: Raw `_conn()` without cleanup in `do_refresh` (`app.py`) — already fixed before audit (uses `_conn_ctx()`).
+- **Bug 59**: `save_outcome` doesn't update `created_at` on upsert (`season_db.py`) — added `created_at=datetime('now')` to ON CONFLICT clause.
+- **Bug 67**: `save_gw_snapshot` doesn't update `created_at` on upsert (`season_db.py`) — added `created_at=datetime('now')` to ON CONFLICT clause.
+
+### MEDIUM — Data fetcher — Fixed
+
+- **Bug 60**: Cache poisoning (`data_fetcher.py`) — now validates CSV via `io.StringIO` parse before writing to cache. Rejects responses with <2 columns.
+- **Bug 61**: `_detect_max_gw` crashes on empty data (`data_fetcher.py`) — added guards for empty DF, missing `gw` column, and NaN max.
+- **Bug 62**: `_cached_manager_fetch` no stale fallback (`data_fetcher.py`) — now catches `RequestException` and falls back to stale cached data if available.
+- **Bug 63**: `_manager_cache` grows without bound (`data_fetcher.py`) — added eviction of stale entries when cache exceeds 200 items.
+- **Bug 64**: `fetch_season_data` catches only `HTTPError` (`data_fetcher.py`) — changed all 4 catch clauses to `requests.RequestException`.
+- **Bug 65**: `_manager_cache` not thread-safe (`data_fetcher.py`) — added `threading.Lock` protecting all cache reads/writes.
+
+### Known Limitations (not fixed)
+
+- **Bug 42**: Static team_code in decomposed targets (`feature_engineering.py`) — `pid_to_team` uses current team from `players` table. Pre-transfer matches get wrong team_code, causing merge to fail (NaN). Handled gracefully: NaN propagates so wrong-team rows don't produce false clean sheets. Fix would require per-match team assignment data not currently available. Same root cause for **Bug 43** (opponent history) and **Bug 44** (home/away form).
+- **Bug 47**: `fixture_congestion` missing `shift(1)` (`feature_engineering.py`) — includes predicted match's own rest in the rolling average. Not data leakage (fixture schedule is known in advance). Borderline design choice.
+- **Bug 54**: Per-player `event_points` may reflect wrong GW (`season_manager.py`) — bootstrap `event_points` is for most recently completed GW. FPL API limitation: per-player GW breakdown not available for past GWs via bootstrap. Total GW points from history API are correct.
+
+### Retracted (false positive)
+
+- ~~**Bug 50**~~: WC evaluation outer merge NaN handling — correctly treats missing GWs as 0 points.
+- ~~**Bug 58**~~: SSE double-serialization — `_broadcast` is never called with pre-serialized JSON.
+
+**Note**: Bugs 45-46 change feature values. Models should be retrained after these fixes.
+
+---
+
 ## Windows EXE Build Pipeline (Feb 2025)
 
 Added a GitHub Actions workflow to build a Windows executable via PyInstaller, and fixed several issues in the spec and launcher that would have caused build or runtime failures.

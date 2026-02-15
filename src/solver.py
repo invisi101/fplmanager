@@ -196,7 +196,7 @@ def solve_milp_team(
         "bench": scrub_nan(bench.to_dict(orient="records")),
         "total_cost": round(team_df["cost"].sum(), 1),
         "starting_points": round(base_pts + captain_pts, 2),
-        "optimization_score": round(base_pts + captain_opt_pts, 2) if captain_opt_pts else None,
+        "optimization_score": round(base_pts + captain_opt_pts, 2) if use_captain and captain_id else None,
         "players": scrub_nan(team_df.to_dict(orient="records")),
         "captain_id": captain_id,
     }
@@ -404,7 +404,7 @@ def solve_transfer_milp(
         "players": scrub_nan(team_df.to_dict(orient="records")),
         "total_cost": round(team_df["cost"].sum(), 1),
         "starting_points": round(base_pts + captain_pts, 2),
-        "optimization_score": round(base_pts + captain_opt_pts, 2) if captain_opt_pts else None,
+        "optimization_score": round(base_pts + captain_opt_pts, 2) if use_captain and captain_id else None,
         "transfers_in_ids": transfers_in_ids,
         "transfers_out_ids": transfers_out_ids,
         "captain_id": captain_id,
@@ -425,11 +425,25 @@ def solve_transfer_milp_with_hits(
     """Wrapper that accounts for -4 pt transfer hits.
 
     Runs ``solve_transfer_milp`` for each candidate transfer count
-    (1 .. max_transfers), subtracts hit penalties for transfers exceeding
+    (0 .. max_transfers), subtracts hit penalties for transfers exceeding
     ``free_transfers``, and returns the result with the best net points.
     """
     best = None
     best_net = -float("inf")
+
+    # 0-transfer baseline: keep all 15 current players, optimize formation/captain only
+    baseline = solve_transfer_milp(
+        player_df, current_player_ids, target_col,
+        budget=budget, max_transfers=0,
+        team_cap=team_cap, captain_col=captain_col,
+    )
+    if baseline is not None:
+        best = baseline
+        best_net = baseline["starting_points"]
+        best["hits"] = 0
+        best["hit_cost"] = 0.0
+        best["net_points"] = round(best_net, 2)
+
     for n in range(1, max_transfers + 1):
         result = solve_transfer_milp(
             player_df, current_player_ids, target_col,

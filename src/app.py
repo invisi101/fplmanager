@@ -24,6 +24,8 @@ from src.data_fetcher import (
     CACHE_DIR,
     CACHE_MAX_AGE_SECONDS,
     load_all_data,
+    fetch_event_live,
+    fetch_fpl_api,
     fetch_manager_entry,
     fetch_manager_picks,
     fetch_manager_history,
@@ -41,7 +43,7 @@ from src.model import (
 )
 from src.backtest import predict_single_gw, run_backtest
 from src.predict import OUTPUT_DIR, format_predictions, run_predictions
-from src.solver import scrub_nan as _scrub_nan, solve_milp_team as _solve_milp_team, solve_transfer_milp as _solve_transfer_milp
+from src.solver import scrub_nan as _scrub_nan, solve_milp_team as _solve_milp_team, solve_transfer_milp as _solve_transfer_milp, solve_transfer_milp_with_hits as _solve_transfer_milp_with_hits
 from src.season_db import SeasonDB
 from src.season_manager import SeasonManager, scrub_nan_recursive
 
@@ -348,10 +350,8 @@ def api_refresh_data():
                     _broadcast(f"Availability check: {len(squad_changes)} players flagged", event="progress")
 
                 # Check plan health for all active seasons
-                db = SeasonDB()
-                conn = db._conn()
-                seasons = conn.execute("SELECT DISTINCT manager_id FROM season").fetchall()
-                conn.close()
+                with SeasonDB()._conn_ctx() as conn:
+                    seasons = conn.execute("SELECT DISTINCT manager_id FROM season").fetchall()
                 for s in seasons:
                     mid = s["manager_id"]
                     health = _season_mgr.check_plan_health(mid)
@@ -359,7 +359,7 @@ def api_refresh_data():
                         desc = "; ".join(t["description"] for t in health["triggers"][:3])
                         print(f"  Plan health issue for manager {mid}: {desc}")
                         _broadcast(
-                            json.dumps({"manager_id": mid, "triggers": health["triggers"][:5], "summary": health["summary"]}),
+                            f"Plan health issue for manager {mid}: {health['summary']}",
                             event="plan_invalidated",
                         )
         except Exception as exc:
@@ -610,6 +610,16 @@ def api_best_team():
     gw3_col = "predicted_next_3gw_points"
     starting_gw = round(starters_df[gw_col].sum(), 2) if gw_col in starters_df.columns else 0
     starting_gw3 = round(starters_df[gw3_col].sum(), 2) if gw3_col in starters_df.columns else 0
+
+    # Add captain bonus (captain doubles points)
+    captain_id = result.get("captain_id")
+    if captain_id and "player_id" in starters_df.columns:
+        cap_row = starters_df[starters_df["player_id"] == captain_id]
+        if not cap_row.empty:
+            if gw_col in cap_row.columns:
+                starting_gw += round(float(cap_row[gw_col].iloc[0]), 2)
+            if gw3_col in cap_row.columns:
+                starting_gw3 += round(float(cap_row[gw3_col].iloc[0]), 2)
 
     return jsonify({
         "players": result["players"],
@@ -1140,11 +1150,19 @@ def api_transfer_recommendations():
 
     # --- Solve ---
     captain_col_arg = "captain_score" if "captain_score" in pool.columns else None
-    result = _solve_transfer_milp(
-        pool, current_squad_ids, target,
-        budget=total_budget, max_transfers=max_transfers,
-        captain_col=captain_col_arg,
-    )
+    if wildcard:
+        result = _solve_transfer_milp(
+            pool, current_squad_ids, target,
+            budget=total_budget, max_transfers=max_transfers,
+            captain_col=captain_col_arg,
+        )
+    else:
+        result = _solve_transfer_milp_with_hits(
+            pool, current_squad_ids, target,
+            budget=total_budget, free_transfers=free_transfers,
+            max_transfers=max_transfers,
+            captain_col=captain_col_arg,
+        )
     if result is None:
         return jsonify({"error": "Could not find a valid transfer solution."}), 400
 
@@ -1189,7 +1207,10 @@ def api_transfer_recommendations():
         transfers_in.append(in_p)
 
     n_transfers = len(in_list)
-    points_hit = 0 if wildcard else max(0, n_transfers - free_transfers) * 4
+    if "hit_cost" in result:
+        points_hit = result["hit_cost"]
+    else:
+        points_hit = max(0, n_transfers - free_transfers) * 4
     points_gained = round(result["starting_points"] - current_xi_points, 2)
     net_gain = round(points_gained - points_hit, 2)
 
@@ -1217,6 +1238,181 @@ def api_transfer_recommendations():
         "wildcard": wildcard,
         "transfers_in_ids": list(result["transfers_in_ids"]),
     })
+
+
+# ---------------------------------------------------------------------------
+# PL Table & GW Scores Endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/pl-table")
+def api_pl_table():
+    """Compute Premier League standings from fixture results."""
+    fixtures_path = CACHE_DIR / "fpl_api_fixtures.json"
+    bootstrap_path = CACHE_DIR / "fpl_api_bootstrap.json"
+    if not fixtures_path.exists() or not bootstrap_path.exists():
+        return jsonify({"error": "No cached data. Click 'Get Latest Data' first."}), 400
+
+    fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
+    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+
+    # Team ID -> name/short_name mapping
+    team_info = {t["id"]: {"name": t["name"], "short": t["short_name"]} for t in bootstrap.get("teams", [])}
+
+    # Accumulate stats from finished fixtures
+    stats = {}  # team_id -> {p, w, d, l, gf, ga, pts, form: []}
+    for t_id in team_info:
+        stats[t_id] = {"p": 0, "w": 0, "d": 0, "l": 0, "gf": 0, "ga": 0, "pts": 0, "form": []}
+
+    finished = [f for f in fixtures if f.get("finished") and f.get("team_h_score") is not None]
+    # Sort by event then kickoff for correct form ordering
+    finished.sort(key=lambda f: (f.get("event", 0), f.get("kickoff_time", "")))
+
+    for f in finished:
+        h = f["team_h"]
+        a = f["team_a"]
+        hs = f["team_h_score"]
+        as_ = f["team_a_score"]
+
+        if h not in stats or a not in stats:
+            continue
+
+        stats[h]["p"] += 1
+        stats[h]["gf"] += hs
+        stats[h]["ga"] += as_
+        stats[a]["p"] += 1
+        stats[a]["gf"] += as_
+        stats[a]["ga"] += hs
+
+        if hs > as_:
+            stats[h]["w"] += 1
+            stats[h]["pts"] += 3
+            stats[h]["form"].append("W")
+            stats[a]["l"] += 1
+            stats[a]["form"].append("L")
+        elif hs < as_:
+            stats[a]["w"] += 1
+            stats[a]["pts"] += 3
+            stats[a]["form"].append("W")
+            stats[h]["l"] += 1
+            stats[h]["form"].append("L")
+        else:
+            stats[h]["d"] += 1
+            stats[h]["pts"] += 1
+            stats[h]["form"].append("D")
+            stats[a]["d"] += 1
+            stats[a]["pts"] += 1
+            stats[a]["form"].append("D")
+
+    # Build table sorted by Pts desc, GD desc, GF desc
+    table = []
+    for t_id, s in stats.items():
+        info = team_info.get(t_id, {})
+        gd = s["gf"] - s["ga"]
+        table.append({
+            "team_id": t_id,
+            "team": info.get("name", ""),
+            "short": info.get("short", ""),
+            "p": s["p"], "w": s["w"], "d": s["d"], "l": s["l"],
+            "gf": s["gf"], "ga": s["ga"], "gd": gd, "points": s["pts"],
+            "form": s["form"][-5:],  # last 5 results
+        })
+    table.sort(key=lambda x: (-x["points"], -x["gd"], -x["gf"]))
+
+    # Add position
+    for i, row in enumerate(table):
+        row["pos"] = i + 1
+
+    return jsonify({"table": table})
+
+
+@app.route("/api/gw-scores")
+def api_gw_scores():
+    """Match details for a specific gameweek."""
+    gameweek = request.args.get("gameweek", type=int)
+    if not gameweek:
+        # Default to latest finished GW
+        next_gw = _get_next_gw()
+        gameweek = (next_gw - 1) if next_gw and next_gw > 1 else 1
+
+    fixtures_path = CACHE_DIR / "fpl_api_fixtures.json"
+    bootstrap_path = CACHE_DIR / "fpl_api_bootstrap.json"
+    if not fixtures_path.exists() or not bootstrap_path.exists():
+        return jsonify({"error": "No cached data. Click 'Get Latest Data' first."}), 400
+
+    fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
+    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+
+    team_info = {t["id"]: {"name": t["name"], "short": t["short_name"]} for t in bootstrap.get("teams", [])}
+    element_map = {el["id"]: el.get("web_name", "Unknown") for el in bootstrap.get("elements", [])}
+
+    gw_fixtures = [f for f in fixtures if f.get("event") == gameweek]
+    gw_fixtures.sort(key=lambda f: f.get("kickoff_time") or "")
+
+    def _extract_stat(stats_list, stat_name, side):
+        """Extract stat entries for home ('h') or away ('a') side."""
+        for stat in stats_list:
+            if stat.get("identifier") == stat_name:
+                return stat.get(side, [])
+        return []
+
+    matches = []
+    for f in gw_fixtures:
+        h_id = f["team_h"]
+        a_id = f["team_a"]
+        h_info = team_info.get(h_id, {})
+        a_info = team_info.get(a_id, {})
+        stats_list = f.get("stats", [])
+
+        match = {
+            "home_team": h_info.get("name", ""),
+            "home_short": h_info.get("short", ""),
+            "away_team": a_info.get("name", ""),
+            "away_short": a_info.get("short", ""),
+            "home_score": f.get("team_h_score"),
+            "away_score": f.get("team_a_score"),
+            "kickoff": f.get("kickoff_time"),
+            "finished": f.get("finished", False),
+            "started": f.get("started", False),
+        }
+
+        # Extract match events from stats
+        for stat_key, output_key in [
+            ("goals_scored", "goals"),
+            ("assists", "assists"),
+            ("yellow_cards", "yellow_cards"),
+            ("red_cards", "red_cards"),
+            ("bonus", "bonus"),
+        ]:
+            home_entries = _extract_stat(stats_list, stat_key, "h")
+            away_entries = _extract_stat(stats_list, stat_key, "a")
+
+            if stat_key == "bonus":
+                match[output_key] = {
+                    "home": [{"player": element_map.get(e["element"], "?"), "points": e["value"]} for e in home_entries],
+                    "away": [{"player": element_map.get(e["element"], "?"), "points": e["value"]} for e in away_entries],
+                }
+            elif stat_key in ("goals_scored",):
+                match[output_key] = {
+                    "home": [{"player": element_map.get(e["element"], "?"), "count": e["value"]} for e in home_entries],
+                    "away": [{"player": element_map.get(e["element"], "?"), "count": e["value"]} for e in away_entries],
+                }
+            else:
+                match[output_key] = {
+                    "home": [{"player": element_map.get(e["element"], "?")} for e in home_entries],
+                    "away": [{"player": element_map.get(e["element"], "?")} for e in away_entries],
+                }
+
+        # Own goals
+        og_home = _extract_stat(stats_list, "own_goals", "h")
+        og_away = _extract_stat(stats_list, "own_goals", "a")
+        match["own_goals"] = {
+            "home": [{"player": element_map.get(e["element"], "?")} for e in og_home],
+            "away": [{"player": element_map.get(e["element"], "?")} for e in og_away],
+        }
+
+        matches.append(match)
+
+    return jsonify({"matches": matches, "gameweek": gameweek})
 
 
 # ---------------------------------------------------------------------------

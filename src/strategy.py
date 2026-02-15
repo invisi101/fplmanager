@@ -718,10 +718,12 @@ class MultiWeekPlanner:
                     pts += bench["predicted_points"].sum()
                 elif gw_chip == "3xc":
                     # TC gives 3x instead of 2x — add one more captain's predicted_points
-                    score_col = "captain_score" if "captain_score" in squad_preds.columns else "predicted_points"
-                    if not squad_preds.empty:
-                        cap_idx = squad_preds[score_col].idxmax()
-                        pts += squad_preds.loc[cap_idx, "predicted_points"]
+                    # Pick captain from starting XI only, not full 15-man squad
+                    top11 = self._select_formation_xi(squad_preds)
+                    score_col = "captain_score" if "captain_score" in top11.columns else "predicted_points"
+                    if not top11.empty:
+                        cap_idx = top11[score_col].idxmax()
+                        pts += top11.loc[cap_idx, "predicted_points"]
 
                 path.append({
                     "gw": gw,
@@ -800,6 +802,7 @@ class MultiWeekPlanner:
                             "ft_available": ft,
                             "predicted_points": round(pts, 2),
                             "squad_ids": list(new_squad_ids),
+                            "chip": gw_chip,
                         })
 
                         actual_transfers = len(transfers_in)
@@ -810,6 +813,19 @@ class MultiWeekPlanner:
                         # Solver failed, keep current squad
                         squad_preds = gw_df[gw_df["player_id"].isin(squad_ids)]
                         pts = self._squad_points_with_captain(squad_preds)
+
+                        # Apply BB/TC even when solver fails
+                        if gw_chip == "bboost":
+                            top11 = self._select_formation_xi(squad_preds)
+                            bench = squad_preds[~squad_preds.index.isin(top11.index)]
+                            pts += bench["predicted_points"].sum()
+                        elif gw_chip == "3xc" and not squad_preds.empty:
+                            top11 = self._select_formation_xi(squad_preds)
+                            score_col = "captain_score" if "captain_score" in top11.columns else "predicted_points"
+                            if not top11.empty:
+                                cap_idx = top11[score_col].idxmax()
+                                pts += top11.loc[cap_idx, "predicted_points"]
+
                         path.append({
                             "gw": gw,
                             "transfers_in": [],
@@ -818,6 +834,7 @@ class MultiWeekPlanner:
                             "ft_available": ft,
                             "predicted_points": round(pts, 2),
                             "squad_ids": list(squad_ids),
+                            "chip": gw_chip,
                         })
                         ft = min(ft + 1, 5)
                 else:

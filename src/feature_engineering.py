@@ -1290,12 +1290,15 @@ def build_features(data: dict) -> pd.DataFrame:
             group_df = group_df.sort_values([group_col, "season", "gameweek"])
 
             # Build a monotonically increasing GW counter across seasons
-            # so that distance is always positive (raw gameweek resets each season)
+            # so that distance is always positive (raw gameweek resets each season).
+            # Bug 46 fix: add off-season gap (10 weeks) so cross-season carry-over
+            # decays more realistically (0.90^11 ≈ 0.31 at GW1 vs 0.90^1 = 0.90)
+            OFF_SEASON_GAP = 10
             season_order = {s: i for i, s in enumerate(
                 sorted(group_df["season"].unique())
             )}
             group_df["_global_gw"] = (
-                group_df["season"].map(season_order) * 38 + group_df["gameweek"]
+                group_df["season"].map(season_order) * (38 + OFF_SEASON_GAP) + group_df["gameweek"]
             )
 
             for col in cols:
@@ -1482,6 +1485,9 @@ def get_feature_columns(df: pd.DataFrame) -> list[str]:
     # Also exclude set piece order raw columns (we use the binary flag)
     exclude.update({"penalties_order", "corners_order", "freekicks_order",
                      "transfers_out_event", "total_points"})
+    # Bug 45 fix: exclude cumulative season totals (proxies for total_points)
+    exclude.update({"influence", "creativity", "threat", "ict_index",
+                     "player_bps", "player_bonus"})
 
     feature_cols = [c for c in df.columns if c not in exclude and df[c].dtype in [np.float64, np.int64, float, int]]
     return sorted(feature_cols)

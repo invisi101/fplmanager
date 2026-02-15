@@ -1,7 +1,9 @@
 """Fetch and cache data from FPL-Core-Insights GitHub repo and the FPL API."""
 
+import io
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -118,14 +120,19 @@ def _fetch_csv(url: str, cache_file: Path, force: bool = False) -> pd.DataFrame:
     print(f"  Fetching {url}")
     try:
         resp = _fetch_url(url)
+        # Bug 60 fix: validate as CSV before writing to cache to prevent
+        # cache poisoning from non-CSV responses (e.g. rate-limit HTML pages)
+        df = pd.read_csv(io.StringIO(resp.text))
+        if df.empty or len(df.columns) < 2:
+            raise ValueError(f"Response does not look like valid CSV ({len(df.columns)} cols)")
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(resp.text, encoding="utf-8")
-    except (requests.RequestException, OSError) as e:
+        return df
+    except (requests.RequestException, OSError, ValueError) as e:
         if cache_file.exists():
             print(f"  Warning: fetch failed ({e}), using stale cache for {cache_file.name}")
             return pd.read_csv(cache_file, encoding="utf-8")
         raise
-    return pd.read_csv(cache_file, encoding="utf-8")
 
 
 def fetch_fpl_api(endpoint: str, force: bool = False) -> dict:
@@ -150,17 +157,33 @@ def fetch_fpl_api(endpoint: str, force: bool = False) -> dict:
 
 _manager_cache: dict[str, tuple] = {}
 _MANAGER_CACHE_TTL = 60  # 60 seconds
+_manager_cache_lock = threading.Lock()
 
 
 def _cached_manager_fetch(cache_key: str, fetch_fn):
-    """Simple TTL cache for manager API calls."""
+    """Simple TTL cache for manager API calls (thread-safe with stale fallback)."""
     now = time.time()
-    if cache_key in _manager_cache:
-        data, ts = _manager_cache[cache_key]
-        if now - ts < _MANAGER_CACHE_TTL:
-            return data
-    data = fetch_fn()
-    _manager_cache[cache_key] = (data, now)
+    with _manager_cache_lock:
+        if cache_key in _manager_cache:
+            data, ts = _manager_cache[cache_key]
+            if now - ts < _MANAGER_CACHE_TTL:
+                return data
+    try:
+        data = fetch_fn()
+    except requests.RequestException:
+        # Bug 62 fix: fall back to stale cached data on network error
+        with _manager_cache_lock:
+            if cache_key in _manager_cache:
+                return _manager_cache[cache_key][0]
+        raise
+    with _manager_cache_lock:
+        _manager_cache[cache_key] = (data, now)
+        # Bug 63 fix: evict stale entries when cache grows too large
+        if len(_manager_cache) > 200:
+            stale = [k for k, (_, ts) in _manager_cache.items()
+                     if now - ts > _MANAGER_CACHE_TTL]
+            for k in stale:
+                del _manager_cache[k]
     return data
 
 
@@ -193,7 +216,12 @@ def _detect_max_gw(season: str, force: bool = False) -> int:
     cache_file = _cache_path(f"{season}_playerstats.csv")
     url = f"{GITHUB_BASE}/{season}/playerstats.csv"
     df = _fetch_csv(url, cache_file, force=force)
-    return int(df["gw"].max())
+    if df.empty or "gw" not in df.columns:
+        return 0
+    max_gw = df["gw"].max()
+    if pd.isna(max_gw):
+        return 0
+    return int(max_gw)
 
 
 def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFrame]:
@@ -210,7 +238,7 @@ def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFram
     probe_cache = _cache_path(f"{season}_probe.csv")
     try:
         _fetch_csv(probe_url, probe_cache, force=force)
-    except requests.HTTPError:
+    except requests.RequestException:
         return {}
 
     if layout == LAYOUT_FLAT:
@@ -219,7 +247,7 @@ def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFram
             cache_file = _cache_path(f"{season}_{key}.csv")
             try:
                 data[key] = _fetch_csv(url, cache_file, force=force)
-            except requests.HTTPError as e:
+            except requests.RequestException as e:
                 print(f"  Warning: could not fetch {season}/{key}: {e}")
     else:
         # Detect max GW first (also caches playerstats.csv)
@@ -231,7 +259,7 @@ def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFram
             cache_file = _cache_path(f"{season}_{key}.csv")
             try:
                 data[key] = _fetch_csv(url, cache_file, force=force)
-            except requests.HTTPError as e:
+            except requests.RequestException as e:
                 print(f"  Warning: could not fetch {season}/{key}: {e}")
 
         for filename in PER_GW_GW_FILES:
@@ -245,11 +273,31 @@ def fetch_season_data(season: str, force: bool = False) -> dict[str, pd.DataFram
                     if "gameweek" not in df.columns:
                         df["gameweek"] = gw
                     frames.append(df)
-                except requests.HTTPError:
+                except requests.RequestException:
                     pass
             if frames:
                 data[key] = pd.concat(frames, ignore_index=True)
 
+    return data
+
+
+def fetch_event_live(event: int, force: bool = False) -> dict:
+    """Fetch per-player live stats for a specific gameweek."""
+    cache_file = _cache_path(f"fpl_api_event_{event}_live.json")
+    if not force and _is_cache_fresh(cache_file, max_age=API_CACHE_MAX_AGE_SECONDS):
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    url = f"{FPL_API_BASE}/event/{event}/live/"
+    print(f"  Fetching {url}")
+    try:
+        resp = _fetch_url(url)
+        data = resp.json()
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except (requests.RequestException, OSError) as e:
+        if cache_file.exists():
+            print(f"  Warning: fetch failed ({e}), using stale cache")
+            return json.loads(cache_file.read_text(encoding="utf-8"))
+        raise
     return data
 
 

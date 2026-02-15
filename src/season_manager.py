@@ -7,13 +7,14 @@ from pathlib import Path
 from src.data_fetcher import (
     CACHE_DIR,
     FPL_API_BASE,
+    fetch_event_live,
     fetch_manager_entry,
     fetch_manager_history,
     fetch_manager_picks,
     fetch_manager_transfers,
 )
 from src.season_db import SeasonDB
-from src.solver import scrub_nan, solve_milp_team, solve_transfer_milp
+from src.solver import scrub_nan, solve_milp_team, solve_transfer_milp, solve_transfer_milp_with_hits
 from src.strategy import (
     ChipEvaluator,
     MultiWeekPlanner,
@@ -448,6 +449,14 @@ class SeasonManager:
                     future_predictions, elements,
                 )
 
+                # Bug 40 fix: captain_score is GW+1 specific (uses Q80 quantile).
+                # For GW+2 onwards, fall back to predicted_points since Q80
+                # doesn't apply to different fixtures.
+                first_pred_gw = min(future_predictions.keys())
+                for gw, gw_df in future_predictions.items():
+                    if gw != first_pred_gw and "captain_score" in gw_df.columns:
+                        gw_df["captain_score"] = gw_df["predicted_points"]
+
                 # Step 2: Chip heatmap
                 log("  Evaluating chips across all GWs...")
                 chip_evaluator = ChipEvaluator()
@@ -566,8 +575,9 @@ class SeasonManager:
                 p["is_vice_captain"] = False
             new_squad_json = json.dumps(scrub_nan(gw1["new_squad"]))
             # No transfer pairs for WC/FH — the full squad is the recommendation
-        elif multi_week_plan and multi_week_plan[0].get("transfers_in"):
-            # Use GW+1 from the multi-week plan
+        elif multi_week_plan:
+            # Bug 41 fix: Use GW+1 from the multi-week plan even when
+            # transfers_in is empty (banking FT recommendation).
             gw1 = multi_week_plan[0]
             predicted_points = gw1.get("predicted_points", current_xi_points)
 
@@ -607,9 +617,14 @@ class SeasonManager:
             if "team_code" in pool.columns:
                 pool["team"] = pool["team_code"].map(code_to_short).fillna("")
 
-            result = solve_transfer_milp(
+            # Bug 37 fix: Use solve_transfer_milp_with_hits to account for
+            # hit penalties, and pass captain_col for captain optimization.
+            cap_col = "captain_score" if "captain_score" in pool.columns else None
+            result = solve_transfer_milp_with_hits(
                 pool, current_squad_ids, target_col,
-                budget=total_budget, max_transfers=free_transfers,
+                budget=total_budget, free_transfers=free_transfers,
+                max_transfers=min(free_transfers + 2, 5),
+                captain_col=cap_col,
             )
 
             if result:
@@ -825,11 +840,22 @@ class SeasonManager:
         picks_data = fetch_manager_picks(manager_id, current_event)
         history = fetch_manager_history(manager_id)
 
-        # Force-refresh bootstrap so event_points are up to date
+        # Fetch bootstrap for player info (names, teams, costs)
         from src.data_fetcher import fetch_fpl_api
         bootstrap = fetch_fpl_api("bootstrap", force=True)
         elements_map = self._get_elements_map(bootstrap)
         id_to_code, _, code_to_short = self._get_team_maps(bootstrap)
+
+        # Bug 54 fix: use live event data for accurate per-GW points
+        # instead of bootstrap event_points (which is always latest GW)
+        live_points_map = {}
+        try:
+            live_data = fetch_event_live(current_event, force=True)
+            for el_live in live_data.get("elements", []):
+                live_points_map[el_live["id"]] = el_live.get("stats", {}).get("total_points", 0)
+            log(f"  Loaded live points for GW{current_event} ({len(live_points_map)} players)")
+        except Exception as exc:
+            log(f"  Warning: could not fetch live event data ({exc}), falling back to bootstrap")
 
         # Build squad
         picks = picks_data.get("picks", [])
@@ -842,6 +868,8 @@ class SeasonManager:
             tid = el.get("team")
             tc = id_to_code.get(tid)
             pos = ELEMENT_TYPE_MAP.get(el.get("element_type"), "")
+            # Use live event points when available, fall back to bootstrap
+            raw_pts = live_points_map.get(eid, el.get("event_points", 0))
             player = {
                 "player_id": eid,
                 "web_name": el.get("web_name", "Unknown"),
@@ -852,7 +880,7 @@ class SeasonManager:
                 "starter": pick.get("position", 12) <= 11,
                 "is_captain": pick.get("is_captain", False),
                 "multiplier": pick.get("multiplier", 1),
-                "event_points": el.get("event_points", 0) * pick.get("multiplier", 1),
+                "event_points": raw_pts * pick.get("multiplier", 1),
             }
             squad.append(player)
             if pick.get("is_captain"):
@@ -1516,6 +1544,22 @@ class SeasonManager:
             current_xi_pts = squad_preds.nlargest(11, target_col)[target_col].sum()
             bench_preds = None
 
+        # Bug 55 fix: Compute cap_col for captain optimization in FH/WC evaluation
+        cap_col = "captain_score" if "captain_score" in pred_df.columns else None
+
+        # Bug 55 fix: Add captain bonus to current_xi_pts for fair comparison
+        if cap_col and cap_col in squad_preds.columns:
+            if "position" in _temp.columns and bench_preds is not None:
+                # xi was computed above via formation selection
+                best_cap_idx = xi[cap_col].idxmax() if cap_col in xi.columns else xi["predicted_points"].idxmax()
+                current_xi_pts += xi.loc[best_cap_idx, "predicted_points"]  # captain doubles
+            else:
+                # Fallback: use best captain_score from top 11
+                top11 = squad_preds.nlargest(11, target_col)
+                if cap_col in top11.columns:
+                    best_cap_idx = top11[cap_col].idxmax()
+                    current_xi_pts += top11.loc[best_cap_idx, target_col]
+
         # Fixture awareness: count DGW teams for current and future GWs
         fixture_calendar = self.db.get_fixture_calendar(season_id, from_gw=next_gw)
         dgw_by_gw = {}
@@ -1534,8 +1578,10 @@ class SeasonManager:
             if bench_preds is not None and len(bench_preds) >= 4:
                 bench_pts = bench_preds["predicted_points"].sum()
             else:
-                all_15 = squad_preds.nlargest(15, target_col)[target_col]
-                bench_pts = all_15.tail(4).sum() if len(all_15) >= 15 else 0
+                # Bug 52 fix: Handle <15 squad predictions gracefully
+                all_n = squad_preds.nlargest(min(15, len(squad_preds)), target_col)[target_col]
+                xi_count = min(11, len(all_n))
+                bench_pts = all_n.iloc[xi_count:].sum() if len(all_n) > xi_count else 0
             # DGW boost: bench players with double fixtures are worth more
             dgw_boost = 1.0 + current_gw_dgw_count * 0.15
             bench_pts *= dgw_boost
@@ -1554,7 +1600,8 @@ class SeasonManager:
         if "freehit" in available:
             # Free Hit: unconstrained best team vs current
             pool = pred_df.dropna(subset=["position", "cost", target_col]).copy()
-            fh_result = solve_milp_team(pool, target_col, budget=total_budget)
+            # Bug 55 fix: Pass captain_col for captain optimization
+            fh_result = solve_milp_team(pool, target_col, budget=total_budget, captain_col=cap_col)
             if fh_result:
                 chip_values["freehit"] = round(fh_result["starting_points"] - current_xi_pts, 1)
             else:
@@ -1563,7 +1610,8 @@ class SeasonManager:
         if "wildcard" in available:
             # Wildcard: unconstrained best team vs current (similar to FH but permanent)
             pool = pred_df.dropna(subset=["position", "cost", target_col]).copy()
-            wc_result = solve_milp_team(pool, target_col, budget=total_budget)
+            # Bug 55 fix: Pass captain_col for captain optimization
+            wc_result = solve_milp_team(pool, target_col, budget=total_budget, captain_col=cap_col)
             if wc_result:
                 chip_values["wildcard"] = round(wc_result["starting_points"] - current_xi_pts, 1)
             else:
@@ -1941,6 +1989,9 @@ class SeasonManager:
         # WC/FH reset at GW20 (available once per half: GW1-19 and GW20-38)
         # All 4 chips (WC, FH, BB, TC) available once per half (GW1-19 and GW20-38), 8 total
         current_gw = season.get("current_gw", 1)
+        # Bug 53 fix: Use next_gw for chip availability check, since chips
+        # are played in future GWs, not the current (already-played) one.
+        next_gw = min(current_gw + 1, 38)
         all_chips_list = [
             {"name": "wildcard", "label": "Wildcard"},
             {"name": "freehit", "label": "Free Hit"},
@@ -1951,7 +2002,7 @@ class SeasonManager:
         for chip in all_chips_list:
             chip_events = [c["gameweek"] for c in chips_used if c["chip_used"] == chip["name"]]
             # Determine which usage matters for current half
-            if current_gw <= 19:
+            if next_gw <= 19:
                 used = any(e <= 19 for e in chip_events)
                 used_in = next((e for e in chip_events if e <= 19), None)
             else:

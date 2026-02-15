@@ -255,7 +255,8 @@ class SeasonDB:
                      transfers_out_json=excluded.transfers_out_json,
                      captain_id=excluded.captain_id,
                      captain_name=excluded.captain_name,
-                     transfers_cost=excluded.transfers_cost""",
+                     transfers_cost=excluded.transfers_cost,
+                     created_at=datetime('now')""",
                 (
                     season_id, gameweek,
                     kwargs.get("squad_json"),
@@ -362,7 +363,8 @@ class SeasonDB:
                      recommended_points=excluded.recommended_points,
                      actual_points=excluded.actual_points,
                      point_delta=excluded.point_delta,
-                     details_json=excluded.details_json""",
+                     details_json=excluded.details_json,
+                     created_at=datetime('now')""",
                 (
                     season_id, gameweek,
                     kwargs.get("followed_transfers"),

@@ -621,6 +621,106 @@
     .compare-pitches { flex-direction: column; }
   }
 
+  /* PL Table panel */
+  .pltable-panel { display: none; }
+  .pltable-panel.visible { display: block; }
+
+  .pl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pl-table th {
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text2);
+    border-bottom: 2px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 1;
+  }
+  .pl-table th.num, .pl-table td.num { text-align: center; }
+  .pl-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pl-table tr:hover td { background: var(--surface2); }
+  .pl-table .team-name { font-weight: 600; }
+  .pl-table .pos-cl { border-left: 3px solid #3b82f6; }
+  .pl-table .pos-el { border-left: 3px solid #f97316; }
+  .pl-table .pos-rel { border-left: 3px solid var(--red); }
+  .form-dots { display: flex; gap: 3px; }
+  .form-dot {
+    width: 18px; height: 18px; border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: #fff;
+  }
+  .form-w { background: #22c55e; }
+  .form-d { background: #6b7280; }
+  .form-l { background: var(--red); }
+
+  /* GW Scores panel */
+  .gwscores-panel { display: none; }
+  .gwscores-panel.visible { display: block; }
+
+  .scores-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .match-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .match-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--surface2);
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .match-card-header .score {
+    font-size: 22px;
+    font-weight: 800;
+    min-width: 60px;
+    text-align: center;
+    letter-spacing: 2px;
+  }
+  .match-card-header .team-short {
+    min-width: 36px;
+    text-align: center;
+    color: var(--text);
+  }
+  .match-card-header .vs { color: var(--text2); font-weight: 400; font-size: 14px; }
+  .match-card-body { padding: 10px 16px; font-size: 12px; }
+  .match-card-body .kickoff-time { color: var(--text2); margin-bottom: 6px; }
+  .match-events { display: flex; flex-direction: column; gap: 4px; }
+  .match-event {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text);
+  }
+  .match-event .ev-icon { flex-shrink: 0; width: 16px; text-align: center; font-size: 11px; }
+  .match-event .ev-side { color: var(--text2); font-size: 11px; min-width: 28px; }
+  .bonus-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent);
+    color: #fff;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    margin-right: 4px;
+  }
+
   /* Season panel */
   .season-panel { display: none; }
   .season-panel.visible { display: block; }
@@ -1128,6 +1228,8 @@
   <div class="tab" data-view="predictions" onclick="switchTab(this)">🔮 Predictions</div>
   <div class="tab" data-view="bestteam" onclick="switchTab(this)">🏆 Best Team</div>
   <div class="tab" data-view="gwcompare" onclick="switchTab(this)">⚖️ GW Compare</div>
+  <div class="tab" data-view="pltable" onclick="switchTab(this)">📊 PL Table</div>
+  <div class="tab" data-view="gwscores" onclick="switchTab(this)">⚽ GW Scores</div>
   <div class="tab" data-view="season" onclick="switchTab(this)">📅 Season</div>
 </div>
 
@@ -1214,6 +1316,43 @@
       <button class="btn btn-primary" id="btnFindTransfers" onclick="findTransfers()">Find Transfers</button>
     </div>
     <div id="transferResults"></div>
+  </div>
+</div>
+
+<!-- PL Table Panel -->
+<div class="content pltable-panel" id="plTablePanel">
+  <div style="max-height:calc(100vh - 180px); overflow-y:auto">
+    <table class="pl-table" id="plTable">
+      <thead>
+        <tr>
+          <th class="num">#</th>
+          <th>Team</th>
+          <th class="num">P</th>
+          <th class="num">W</th>
+          <th class="num">D</th>
+          <th class="num">L</th>
+          <th class="num">GF</th>
+          <th class="num">GA</th>
+          <th class="num">GD</th>
+          <th class="num">Pts</th>
+          <th>Form</th>
+        </tr>
+      </thead>
+      <tbody id="plTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- GW Scores Panel -->
+<div class="content gwscores-panel" id="gwScoresPanel">
+  <div class="controls-row">
+    <label style="font-weight:600">Gameweek:</label>
+    <input type="number" class="budget-input" id="gwScoresInput" value="" min="1" max="38" style="width:70px">
+    <button class="btn btn-primary" onclick="loadGWScores()">Load</button>
+    <span id="gwScoresStatus" style="font-size:12px;color:var(--text2)"></span>
+  </div>
+  <div class="scores-grid" id="gwScoresGrid">
+    <div class="empty-state"><h3>GW Scores</h3><p>Select a gameweek above and click "Load" to see match results.</p></div>
   </div>
 </div>
 
@@ -1492,6 +1631,7 @@ function appendLog(msg) {
 // Actions
 // ---------------------------------------------------------------------------
 function refreshData() {
+  plTableLoaded = false;
   fetch('/api/refresh-data', { method: 'POST' }).then(r => r.json()).then(d => {
     if (d.error) alert(d.error);
   });
@@ -1640,6 +1780,174 @@ function renderTable() {
 }
 
 // ---------------------------------------------------------------------------
+// PL Table
+// ---------------------------------------------------------------------------
+let plTableLoaded = false;
+function loadPLTable() {
+  if (plTableLoaded) return;
+  const tbody = document.getElementById('plTableBody');
+  tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text2)">Loading...</td></tr>';
+
+  fetch('/api/pl-table').then(r => r.json()).then(d => {
+    if (d.error) {
+      tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--red)">${d.error}</td></tr>`;
+      return;
+    }
+    plTableLoaded = true;
+    tbody.innerHTML = '';
+    d.table.forEach(row => {
+      const tr = document.createElement('tr');
+      // Position highlight class
+      let posClass = '';
+      if (row.pos <= 4) posClass = 'pos-cl';
+      else if (row.pos <= 6) posClass = 'pos-el';
+      else if (row.pos >= 18) posClass = 'pos-rel';
+
+      const formHtml = (row.form || []).map(f => {
+        const cls = f === 'W' ? 'form-w' : f === 'D' ? 'form-d' : 'form-l';
+        return `<span class="form-dot ${cls}">${f}</span>`;
+      }).join('');
+
+      tr.innerHTML = `
+        <td class="num ${posClass}">${row.pos}</td>
+        <td class="team-name">${row.short} <span style="color:var(--text2);font-weight:400;font-size:12px">${row.team}</span></td>
+        <td class="num">${row.p}</td>
+        <td class="num">${row.w}</td>
+        <td class="num">${row.d}</td>
+        <td class="num">${row.l}</td>
+        <td class="num">${row.gf}</td>
+        <td class="num">${row.ga}</td>
+        <td class="num" style="font-weight:600;color:${row.gd > 0 ? 'var(--green)' : row.gd < 0 ? 'var(--red)' : 'var(--text2)'}">${row.gd > 0 ? '+' : ''}${row.gd}</td>
+        <td class="num" style="font-weight:700;font-size:14px">${row.points}</td>
+        <td><div class="form-dots">${formHtml}</div></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }).catch(err => {
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--red)">Error: ${err.message}</td></tr>`;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// GW Scores
+// ---------------------------------------------------------------------------
+function loadGWScores() {
+  const gw = parseInt(document.getElementById('gwScoresInput').value) || 1;
+  const grid = document.getElementById('gwScoresGrid');
+  const status = document.getElementById('gwScoresStatus');
+  grid.innerHTML = '<div class="empty-state"><p>Loading...</p></div>';
+  status.textContent = '';
+
+  fetch(`/api/gw-scores?gameweek=${gw}`).then(r => r.json()).then(d => {
+    if (d.error) {
+      grid.innerHTML = `<div class="empty-state"><p style="color:var(--red)">${d.error}</p></div>`;
+      return;
+    }
+    if (!d.matches || d.matches.length === 0) {
+      grid.innerHTML = '<div class="empty-state"><p>No fixtures found for this gameweek.</p></div>';
+      return;
+    }
+    status.textContent = `${d.matches.length} matches`;
+    grid.innerHTML = '';
+
+    d.matches.forEach(m => {
+      const card = document.createElement('div');
+      card.className = 'match-card';
+
+      // Header: score or vs
+      let scoreHtml;
+      if (m.finished || m.started) {
+        scoreHtml = `<span class="score">${m.home_score ?? '?'} - ${m.away_score ?? '?'}</span>`;
+      } else {
+        scoreHtml = '<span class="vs">vs</span>';
+      }
+
+      // Format kickoff
+      let koText = '';
+      if (m.kickoff) {
+        const dt = new Date(m.kickoff);
+        koText = dt.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'}) + ' ' +
+                 dt.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
+      }
+
+      // Build events
+      let eventsHtml = '';
+      if (m.finished || m.started) {
+        // Goals
+        const allGoals = [];
+        (m.goals?.home || []).forEach(g => {
+          const cnt = g.count > 1 ? ` x${g.count}` : '';
+          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.home_short}</span> ${g.player}${cnt}</div>`);
+        });
+        (m.goals?.away || []).forEach(g => {
+          const cnt = g.count > 1 ? ` x${g.count}` : '';
+          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.away_short}</span> ${g.player}${cnt}</div>`);
+        });
+        // Own goals
+        (m.own_goals?.home || []).forEach(g => {
+          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.home_short}</span> ${g.player} <span style="color:var(--text2)">(OG)</span></div>`);
+        });
+        (m.own_goals?.away || []).forEach(g => {
+          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.away_short}</span> ${g.player} <span style="color:var(--text2)">(OG)</span></div>`);
+        });
+
+        // Assists
+        const allAssists = [];
+        (m.assists?.home || []).forEach(a => {
+          allAssists.push(`<div class="match-event"><span class="ev-icon">🅰️</span><span class="ev-side">${m.home_short}</span> ${a.player}</div>`);
+        });
+        (m.assists?.away || []).forEach(a => {
+          allAssists.push(`<div class="match-event"><span class="ev-icon">🅰️</span><span class="ev-side">${m.away_short}</span> ${a.player}</div>`);
+        });
+
+        // Cards
+        const allCards = [];
+        (m.yellow_cards?.home || []).forEach(c => {
+          allCards.push(`<div class="match-event"><span class="ev-icon">🟡</span><span class="ev-side">${m.home_short}</span> ${c.player}</div>`);
+        });
+        (m.yellow_cards?.away || []).forEach(c => {
+          allCards.push(`<div class="match-event"><span class="ev-icon">🟡</span><span class="ev-side">${m.away_short}</span> ${c.player}</div>`);
+        });
+        (m.red_cards?.home || []).forEach(c => {
+          allCards.push(`<div class="match-event"><span class="ev-icon">🔴</span><span class="ev-side">${m.home_short}</span> ${c.player}</div>`);
+        });
+        (m.red_cards?.away || []).forEach(c => {
+          allCards.push(`<div class="match-event"><span class="ev-icon">🔴</span><span class="ev-side">${m.away_short}</span> ${c.player}</div>`);
+        });
+
+        // Bonus
+        const allBonus = [];
+        const bonusAll = [...(m.bonus?.home || []), ...(m.bonus?.away || [])];
+        bonusAll.sort((a, b) => b.points - a.points);
+        bonusAll.forEach(b => {
+          allBonus.push(`<div class="match-event"><span class="bonus-badge">${b.points}</span> ${b.player}</div>`);
+        });
+
+        if (allGoals.length) eventsHtml += allGoals.join('');
+        if (allAssists.length) eventsHtml += allAssists.join('');
+        if (allCards.length) eventsHtml += allCards.join('');
+        if (allBonus.length) eventsHtml += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${allBonus.join('')}</div>`;
+      }
+
+      card.innerHTML = `
+        <div class="match-card-header">
+          <span class="team-short">${m.home_short}</span>
+          ${scoreHtml}
+          <span class="team-short">${m.away_short}</span>
+        </div>
+        <div class="match-card-body">
+          <div class="kickoff-time">${koText}</div>
+          <div class="match-events">${eventsHtml}</div>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  }).catch(err => {
+    grid.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${err.message}</p></div>`;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Interactions
 // ---------------------------------------------------------------------------
 function filterPosition(btn) {
@@ -1697,6 +2005,25 @@ function switchTab(tab) {
     if (saved) document.getElementById('managerIdInput').value = saved;
   } else {
     myTeam.classList.remove('visible');
+  }
+
+  const plTablePanel = document.getElementById('plTablePanel');
+  if (view === 'pltable') {
+    plTablePanel.classList.add('visible');
+    loadPLTable();
+  } else {
+    plTablePanel.classList.remove('visible');
+  }
+
+  const gwScoresPanel = document.getElementById('gwScoresPanel');
+  if (view === 'gwscores') {
+    gwScoresPanel.classList.add('visible');
+    if (!document.getElementById('gwScoresInput').value) {
+      const defGW = nextGW ? nextGW - 1 : 1;
+      document.getElementById('gwScoresInput').value = Math.max(1, defGW);
+    }
+  } else {
+    gwScoresPanel.classList.remove('visible');
   }
 
   const seasonPanel = document.getElementById('seasonPanel');
