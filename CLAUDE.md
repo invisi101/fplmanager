@@ -341,7 +341,7 @@ Key FPL rules that affect the codebase logic:
 
 ## Bugs Fixed (Audit Feb 2025)
 
-Bugs 1-13 have been fixed. Here's what was wrong and what changed:
+Bugs 1-36 have been fixed. Here's what was wrong and what changed:
 
 ### CRITICAL — Fixed
 
@@ -376,6 +376,33 @@ Bugs 1-13 have been fixed. Here's what was wrong and what changed:
 - **Bug 18**: Historical backfill prices (`season_manager.py`) — documented as unavoidable (public API has no historical prices). Added code comment.
 - **Bug 19**: GW39 at end of season (`app.py`, `season_manager.py`) — `_get_next_gw` now clamped to max 38.
 - **Bug 20**: BB evaluation (`strategy.py`) — for future GWs within prediction horizon, now solves MILP for optimal squad and uses that bench instead of current squad's bench. Immediate GW still uses current squad.
+
+### HIGH — Strategy/solver (second audit) — Fixed
+
+- **Bug 21**: BB/TC scoring missing from path simulation (`strategy.py`) — `_simulate_path` never added chip-specific points when evaluating transfer plans. BB now adds bench points, TC adds extra captain bonus, for both transfer and no-transfer branches.
+- **Bug 24**: Captain selection inconsistency (`strategy.py`) — `_squad_points_with_captain` used `predicted_points` to pick captain while MILP solver used `captain_score`. Now uses `captain_score` for selection (consistent with solver), `predicted_points` for the bonus value.
+- **Bug 25**: TC chip value used wrong column (`strategy.py`) — `_evaluate_triple_captain` used `captain_score` as the TC value, but `captain_score` is a blended metric (0.4×mean + 0.6×Q80), not actual points. Now uses `captain_score` to identify best captain but `predicted_points` for the value.
+- **Bug 28**: Transfer constraint overcount (`solver.py`) — when current squad players were missing from the prediction pool (injured/delisted), the constraint `keep >= 15 - max_transfers` was unsatisfiable. Now calculates forced replacements and reduces effective max transfers accordingly.
+- **Bug 29**: No hit penalty in solver objective (`solver.py`) — extra transfers beyond FTs cost -4 points each in FPL, but the solver never subtracted hits. Added `solve_transfer_milp_with_hits()` wrapper that iterates transfer counts and picks the best net result.
+- **Bug 30**: `/api/best-team` missing captain optimization (`app.py`) — endpoint never passed `captain_col` to MILP solver, so optimal squad had no captain decision. Now passes `captain_col="captain_score"` when available.
+- **Bug 31**: `starting_points` reporting inconsistency (`solver.py`) — `starting_points` used mean `predicted_points` while the solver optimized on `captain_score`. Added `optimization_score` field that reflects the actual objective value.
+
+### MEDIUM — Predictions/model (second audit) — Fixed
+
+- **Bug 23**: Stale lookahead features in offset predictions (`predict.py`) — `_build_offset_snapshot` dropped and recomputed per-GW features but missed `avg_fdr_next3`, `home_pct_next3`, and `avg_opponent_elo_next3`. These retained GW+1 values for all offsets. Now recomputes them from fixture_map for each target GW.
+- **Bug 35**: Confidence decay discounts GW+1 (`predict.py`) — decay was `0.95^offset` where offset=1 for GW+1, giving 0.95 confidence on the most reliable prediction. Changed to `0.95^(offset-1)` so GW+1 gets full confidence (1.0).
+- **Bug 36**: CS sub-model uses binary:logistic with fractional targets (`model.py`) — DGW target division creates fractional clean sheet values (0.5) which aren't valid for `binary:logistic`. Changed to `reg:squarederror`.
+
+### MEDIUM — Season/database (second audit) — Fixed
+
+- **Bug 22**: Budget inflation with now_cost (`season_manager.py`) — used `sum(now_cost)` for squad value, but `now_cost` is current market price, not selling price (you only get 50% of price rises). Now uses `entry_history["value"]` (the API's selling value) when available.
+- **Bug 26**: `current_xi_pts` returns 0 when <11 players available (`season_manager.py`) — `_evaluate_chips` required exactly 11 predictions; if fewer matched, XI points were 0. Now sums the best N available players.
+- **Bug 27**: Missing `max(ft, 0)` floor in app.py FT calc (`app.py`) — `_calculate_free_transfers` could go negative before accrual (season_manager.py had the floor, app.py didn't). Added `ft = max(ft, 0)`.
+- **Bug 32**: Connection resource leak (`season_db.py`) — most methods opened SQLite connections without guaranteed cleanup on exceptions. Rewrote all methods to use `_conn_ctx()` context manager with `try/finally conn.close()`.
+- **Bug 33**: Stale `created_at` on strategic plan upsert (`season_db.py`) — `save_strategic_plan` ON CONFLICT clause didn't update `created_at`, so overwritten plans kept the original timestamp. Added `created_at=datetime('now')` to the update.
+- **Bug 34**: Stale `created_at` on recommendation upsert (`season_db.py`) — same issue as Bug 33 but for `save_recommendation`. Added `created_at=datetime('now')` to the update.
+
+**Note**: Bugs 23, 35, 36 change predictions/model behavior. Models should be retrained after these fixes.
 
 ---
 
