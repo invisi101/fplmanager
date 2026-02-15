@@ -609,7 +609,7 @@ def format_predictions(preds: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
         # Fallback: get names from bootstrap API data
         if "web_name" not in result.columns or result["web_name"].isna().all():
             import json
-            bootstrap_path = Path(__file__).resolve().parent.parent / "cache" / "fpl_api_bootstrap.json"
+            bootstrap_path = _BASE / "cache" / "fpl_api_bootstrap.json"
             if bootstrap_path.exists():
                 try:
                     bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
@@ -619,6 +619,10 @@ def format_predictions(preds: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
                     result["web_name"] = result["player_id"].map(name_map).fillna("Unknown")
                 except Exception:
                     pass
+
+        # Last resort: use player_id as name so predictions still work
+        if "web_name" not in result.columns:
+            result["web_name"] = result["player_id"].astype(str)
 
     # Add team names from API data (will be added in main if available)
 
