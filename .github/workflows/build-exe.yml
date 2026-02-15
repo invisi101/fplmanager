@@ -33,10 +33,10 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name }}
           files: Gaffer-Windows.zip
 
-      - name: Upload as artifact (manual runs)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload as artifact
         uses: actions/upload-artifact@v4
         with:
           name: Gaffer-Windows
@@ -66,10 +66,10 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name }}
           files: Gaffer-macOS.zip
 
-      - name: Upload as artifact (manual runs)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Upload as artifact
         uses: actions/upload-artifact@v4
         with:
           name: Gaffer-macOS
