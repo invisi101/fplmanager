@@ -599,11 +599,26 @@ def format_predictions(preds: pd.DataFrame, df: pd.DataFrame) -> pd.DataFrame:
 
     # Add web_name from the feature matrix if not already present
     if "web_name" not in result.columns or result["web_name"].isna().all():
-        name_source = df[df["season"] == CURRENT_SEASON][["player_id", "web_name"]].dropna(subset=["web_name"])
-        name_source = name_source.drop_duplicates(subset="player_id", keep="last")
-        if "web_name" in result.columns:
-            result = result.drop(columns=["web_name"])
-        result = result.merge(name_source, on="player_id", how="left")
+        if "web_name" in df.columns:
+            name_source = df[df["season"] == CURRENT_SEASON][["player_id", "web_name"]].dropna(subset=["web_name"])
+            name_source = name_source.drop_duplicates(subset="player_id", keep="last")
+            if "web_name" in result.columns:
+                result = result.drop(columns=["web_name"])
+            result = result.merge(name_source, on="player_id", how="left")
+
+        # Fallback: get names from bootstrap API data
+        if "web_name" not in result.columns or result["web_name"].isna().all():
+            import json
+            bootstrap_path = Path(__file__).resolve().parent.parent / "cache" / "fpl_api_bootstrap.json"
+            if bootstrap_path.exists():
+                try:
+                    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+                    name_map = {el["id"]: el.get("web_name", "Unknown") for el in bootstrap.get("elements", [])}
+                    if "web_name" in result.columns:
+                        result = result.drop(columns=["web_name"])
+                    result["web_name"] = result["player_id"].map(name_map).fillna("Unknown")
+                except Exception:
+                    pass
 
     # Add team names from API data (will be added in main if available)
 

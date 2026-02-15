@@ -283,7 +283,7 @@ def api_predictions():
         df = df[df["position"] == position]
 
     search = request.args.get("search", "").strip().lower()
-    if search:
+    if search and "web_name" in df.columns:
         df = df[df["web_name"].str.lower().str.contains(search, na=False)]
 
     sort_by = request.args.get("sort", "predicted_next_gw_points")
