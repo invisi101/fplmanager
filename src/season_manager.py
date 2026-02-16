@@ -265,7 +265,8 @@ class SeasonManager:
                 gameweek=gw,
                 squad_json=json.dumps(squad) if squad else None,
                 bank=entry_hist.get("bank", gw_data.get("bank", 0)) / 10 if entry_hist else gw_data.get("bank", 0) / 10,
-                team_value=entry_hist.get("value", gw_data.get("value", 0)) / 10 if entry_hist else gw_data.get("value", 0) / 10,
+                # "value" from API includes bank; subtract bank for squad-only value
+                team_value=(entry_hist.get("value", gw_data.get("value", 0)) - entry_hist.get("bank", gw_data.get("bank", 0))) / 10 if entry_hist else (gw_data.get("value", 0) - gw_data.get("bank", 0)) / 10,
                 free_transfers=None,  # Calculated on demand
                 chip_used=chip_map.get(gw),
                 points=gw_data.get("points"),
@@ -373,12 +374,12 @@ class SeasonManager:
 
         entry_hist = picks_data.get("entry_history", {})
         bank = entry_hist.get("bank", 0) / 10
-        # Use entry_history "value" (squad selling value) when available;
-        # this accounts for the 50% price-rise rule on selling.
-        # Fall back to sum(now_cost) if value is missing (slightly optimistic).
-        squad_value = entry_hist.get("value")
-        if squad_value:
-            total_budget = round(bank + squad_value / 10, 1)
+        # entry_history "value" is total value INCL. bank (squad selling + bank).
+        # This accounts for the 50% price-rise rule on selling.
+        # Fall back to sum(now_cost) + bank if value is missing (slightly optimistic).
+        api_value = entry_hist.get("value")
+        if api_value:
+            total_budget = round(api_value / 10, 1)
         else:
             total_budget = round(bank + current_squad_cost, 1)
 
@@ -599,7 +600,10 @@ class SeasonManager:
                 pid = t.get("player_id")
                 in_info = dict(t)
                 el = elements_map.get(pid, {})
+                pred = pred_map.get(pid, {})
                 in_info["event_points"] = el.get("event_points", 0)
+                in_info["predicted_next_gw_points"] = pred.get("predicted_next_gw_points")
+                in_info["predicted_next_3gw_points"] = pred.get("predicted_next_3gw_points")
                 in_info["total_points"] = el.get("total_points", 0)
                 in_info["direction"] = "in"
                 in_list.append(in_info)
@@ -649,7 +653,10 @@ class SeasonManager:
                 for pid in result.get("transfers_in_ids", set()):
                     in_info = dict(next((p for p in result["players"] if p["player_id"] == pid), {}))
                     el = elements_map.get(pid, {})
+                    pred = pred_map.get(pid, {})
                     in_info["event_points"] = el.get("event_points", 0)
+                    in_info["predicted_next_gw_points"] = pred.get("predicted_next_gw_points")
+                    in_info["predicted_next_3gw_points"] = pred.get("predicted_next_3gw_points")
                     in_info["total_points"] = el.get("total_points", 0)
                     in_info["direction"] = "in"
                     in_list.append(in_info)
@@ -919,7 +926,8 @@ class SeasonManager:
             gameweek=current_event,
             squad_json=json.dumps(squad),
             bank=entry_hist.get("bank", gw_data.get("bank", 0)) / 10 if entry_hist else gw_data.get("bank", 0) / 10,
-            team_value=entry_hist.get("value", gw_data.get("value", 0)) / 10 if entry_hist else gw_data.get("value", 0) / 10,
+            # "value" from API includes bank; subtract bank for squad-only value
+            team_value=(entry_hist.get("value", gw_data.get("value", 0)) - entry_hist.get("bank", gw_data.get("bank", 0))) / 10 if entry_hist else (gw_data.get("value", 0) - gw_data.get("bank", 0)) / 10,
             free_transfers=self._calculate_free_transfers(history),
             chip_used=chip_map.get(current_event),
             points=gw_data.get("points"),

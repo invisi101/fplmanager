@@ -730,9 +730,8 @@ def api_gw_compare():
     # Enrich manager's picks
     picks = picks_data.get("picks", [])
     entry_history = picks_data.get("entry_history", {})
-    budget_value = entry_history.get("value", 0) / 10
-    budget_bank = entry_history.get("bank", 0) / 10
-    budget = round(budget_value + budget_bank, 1)
+    # entry_history "value" is total value INCLUDING bank
+    budget = round(entry_history.get("value", 0) / 10, 1)
 
     my_squad = []
     for pick in picks:
@@ -926,10 +925,10 @@ def api_my_team():
     fixture_map = _get_next_fixtures(1)
     next_gw = _get_next_gw()
 
-    # Picks entry_history has bank and value
+    # Picks entry_history: "value" is total value INCLUDING bank
     entry_history = picks_data.get("entry_history", {})
     bank = entry_history.get("bank", 0) / 10  # tenths -> millions
-    squad_value = entry_history.get("value", 0) / 10
+    squad_value = (entry_history.get("value", 0) - entry_history.get("bank", 0)) / 10
 
     # Active chip for this GW
     active_chip = picks_data.get("active_chip")
