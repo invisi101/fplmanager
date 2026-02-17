@@ -3800,93 +3800,69 @@ function renderRecommendation(rec) {
     html += '</div>';
   }
 
-  // Transfer planner: use now vs bank for next week
+  // Why this transfer recommendation? (bank-vs-use reasoning)
   if (bankAnalysis.recommendation) {
     const strats = bankAnalysis.strategies || [];
     const best = bankAnalysis.best_strategy || {};
     const bestUse = best.use_this_week;
     const baFTs = bankAnalysis.free_transfers;
     const gw = rec.gameweek;
-    const nextGw = gw + 1;
+    const nextGw = gw < 38 ? gw + 1 : gw;
 
-    // Find bank baseline for relative comparisons
     const bankStrat = strats.find(s => s.use_this_week === 0);
     const bankTotal = bankStrat ? bankStrat.total_2week : null;
 
-    // Build the verdict sentence
-    let verdict;
-    if (bestUse === 0) {
-      verdict = `Save your transfer${baFTs > 1 ? 's' : ''} — you'll have <strong>${best.fts_next_week} FT${best.fts_next_week > 1 ? 's' : ''}</strong> for GW${nextGw}`;
+    // Build reasoning lines
+    let lines = [];
+
+    if (nTransfers > 0 && bestUse > 0) {
+      // Transfers were recommended — explain why using FTs now beats banking
+      if (bankTotal != null) {
+        const gain = best.total_2week - bankTotal;
+        if (gain > 0) {
+          lines.push(`Making the transfer${nTransfers > 1 ? 's' : ''} above is worth <span style="color:var(--green);font-weight:600">+${gain.toFixed(1)} pts</span> more over GW${gw}\u2013${nextGw} compared to saving your FT${baFTs > 1 ? 's' : ''}.`);
+        } else if (gain === 0) {
+          lines.push(`Transferring now scores the same over GW${gw}\u2013${nextGw} as banking, but gives you a stronger GW${gw} squad.`);
+        } else {
+          lines.push(`Banking would score <span style="color:var(--orange);font-weight:600">${Math.abs(gain).toFixed(1)} pts</span> more over GW${gw}\u2013${nextGw}, but the transfer improves your immediate squad.`);
+        }
+      }
+      lines.push(`After transferring, you'll have <strong>${best.fts_next_week} FT${best.fts_next_week > 1 ? 's' : ''}</strong> for GW${nextGw}.`);
+    } else if (nTransfers === 0 && bestUse === 0) {
+      // No transfers recommended and banking is best — explain why
+      lines.push(`No upgrade available this week is worth using a transfer on.`);
+      lines.push(`Banking gives you <strong>${best.fts_next_week} FT${best.fts_next_week > 1 ? 's' : ''}</strong> for GW${nextGw}` +
+        (best.fts_next_week >= 2 ? `, opening up stronger moves next week.` : `.`));
       if (bankTotal != null) {
         const useStrat = strats.find(s => s.use_this_week > 0);
         if (useStrat) {
           const cost = bankTotal - useStrat.total_2week;
-          if (cost > 0) verdict += `, which is worth <span style="color:var(--green);font-weight:600">+${cost.toFixed(1)} pts</span> over transferring now`;
+          if (cost > 0) lines.push(`Saving is worth <span style="color:var(--green);font-weight:600">+${cost.toFixed(1)} pts</span> more than the best transfer over GW${gw}\u2013${nextGw}.`);
         }
       }
-    } else {
-      const hitTransfers = Math.max(0, bestUse - baFTs);
-      if (hitTransfers > 0) {
-        verdict = `Make <strong>${bestUse} transfer${bestUse > 1 ? 's' : ''}</strong> now (${baFTs} free + ${hitTransfers} hit)`;
-      } else {
-        verdict = `Use <strong>${bestUse}</strong> of your <strong>${baFTs}</strong> free transfer${baFTs > 1 ? 's' : ''}`;
-      }
+    } else if (nTransfers > 0 && bestUse === 0) {
+      // Transfers recommended by 5-GW planner but 2-week lookahead prefers banking
+      // The 5-GW planner sees further ahead — show both perspectives
+      lines.push(`The transfer above is recommended based on the full 5-week outlook.`);
       if (bankTotal != null) {
-        const gain = best.total_2week - bankTotal;
-        if (gain > 0) verdict += ` — gains <span style="color:var(--green);font-weight:600">+${gain.toFixed(1)} pts</span> over banking`;
-        else if (gain === 0) verdict += ` — same total as banking, but a stronger GW${gw} squad`;
+        const useStrat = strats.find(s => s.use_this_week > 0);
+        if (useStrat) {
+          const diff = useStrat.total_2week - bankTotal;
+          if (diff < 0) lines.push(`Over just GW${gw}\u2013${nextGw}, banking would score <span style="color:var(--text2)">${Math.abs(diff).toFixed(1)} pts</span> more — but the longer-term fixture swing makes the transfer worthwhile.`);
+        }
       }
+    } else if (nTransfers === 0 && bestUse > 0) {
+      // No transfers shown but lookahead thinks using FTs is better
+      // The main recommendation takes priority
+      lines.push(`Banking your FT gives you <strong>${bankStrat ? bankStrat.fts_next_week : baFTs + 1} FT${(bankStrat ? bankStrat.fts_next_week : baFTs + 1) > 1 ? 's' : ''}</strong> for GW${nextGw}.`);
     }
 
-    html += `<div style="margin-top:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Use or bank your transfer${baFTs > 1 ? 's' : ''}?</div>
-      <div style="font-size:13px;margin-bottom:10px;line-height:1.5">${verdict}</div>`;
-
-    if (strats.length > 1) {
-      html += `<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Projected starting XI points for each option:</div>`;
-      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">';
-      for (const s of strats) {
-        const isBest = s.use_this_week === bestUse;
-        const border = isBest ? 'border-color:var(--accent)' : '';
-
-        // Card title
-        let title;
-        if (s.use_this_week === 0) {
-          title = 'Save transfer' + (baFTs > 1 ? 's' : '');
-        } else {
-          title = `Transfer ${s.use_this_week} player${s.use_this_week > 1 ? 's' : ''} now`;
-        }
-
-        // Relative difference vs bank baseline
-        let diffBadge = '';
-        if (bankTotal != null && s.use_this_week > 0) {
-          const diff = s.total_2week - bankTotal;
-          const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
-          const diffColor = diff > 0 ? 'var(--green)' : diff < 0 ? 'var(--red)' : 'var(--text2)';
-          diffBadge = `<span style="font-size:11px;color:${diffColor};font-weight:600;margin-left:auto">${diffStr}</span>`;
-        }
-
-        // Footer: consequence for next week
-        let footer = s.use_this_week === 0
-          ? `Then ${s.fts_next_week} FT${s.fts_next_week > 1 ? 's' : ''} available for GW${nextGw}`
-          : `Leaves ${s.fts_next_week} FT${s.fts_next_week > 1 ? 's' : ''} for GW${nextGw}`;
-
-        html += `<div style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;${border}">
-          <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
-            <span style="font-weight:600;font-size:13px">${title}${isBest ? ' *' : ''}</span>
-            ${diffBadge}
-          </div>
-          <div style="font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:1px 8px">
-            <span style="color:var(--text2)">GW${gw}</span><span style="text-align:right">${s.week1_points?.toFixed(1)}</span>
-            <span style="color:var(--text2)">GW${nextGw}</span><span style="text-align:right">${s.week2_points?.toFixed(1)}</span>
-            <span style="color:var(--text2)">Combined</span><span style="text-align:right;font-weight:700;color:${isBest ? 'var(--green)' : 'var(--text)'}">${s.total_2week?.toFixed(1)}</span>
-          </div>
-          <div style="font-size:11px;color:var(--text2);margin-top:4px">${footer}</div>
-        </div>`;
-      }
-      html += '</div>';
+    if (lines.length) {
+      html += `<div style="margin-top:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">Why?</div>
+        <div style="font-size:12px;line-height:1.6">${lines.join('<br>')}</div>
+      </div>`;
     }
-    html += '</div>';
   }
 
   html += `<p style="margin-top:12px;font-size:12px;color:var(--text2)">Predicted starting XI: ${rec.predicted_points?.toFixed(1) || '-'} pts</p>`;
