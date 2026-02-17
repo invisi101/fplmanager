@@ -11,7 +11,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from src.solver import scrub_nan, solve_milp_team, solve_transfer_milp
+from src.solver import scrub_nan, solve_milp_team, solve_transfer_milp_with_hits
 
 
 # ---------------------------------------------------------------------------
@@ -189,11 +189,8 @@ class ChipEvaluator:
         for gw in all_gws:
             if gw in future_predictions:
                 gw_df = future_predictions[gw]
-                # Immediate GW: use current squad; future GWs: use full pool
-                if gw == first_pred_gw:
-                    candidates = gw_df[gw_df["player_id"].isin(current_squad_ids)]
-                else:
-                    candidates = gw_df
+                # TC can only be used on a player in your squad
+                candidates = gw_df[gw_df["player_id"].isin(current_squad_ids)]
                 if not candidates.empty:
                     # DGW value already captured in predicted_points (summed across fixtures)
                     # Use captain_score to identify the best captain, but the TC chip value
@@ -230,8 +227,9 @@ class ChipEvaluator:
                 # Current squad points this GW (use MILP for formation-correct baseline)
                 squad_preds = gw_df[gw_df["player_id"].isin(current_squad_ids)]
                 current_pts = 0
+                cap_col = "captain_score" if "captain_score" in gw_df.columns else None
                 if not squad_preds.empty and "position" in squad_preds.columns and "cost" in squad_preds.columns:
-                    curr_result = solve_milp_team(squad_preds, "predicted_points", budget=9999)
+                    curr_result = solve_milp_team(squad_preds, "predicted_points", budget=9999, captain_col=cap_col)
                     current_pts = curr_result["starting_points"] if curr_result else 0
                 if current_pts == 0 and not squad_preds.empty:
                     current_pts = squad_preds.nlargest(min(11, len(squad_preds)), "predicted_points")["predicted_points"].sum()
@@ -239,7 +237,7 @@ class ChipEvaluator:
                 # Solve unconstrained best XI (need full pool with position/cost)
                 pool = gw_df.copy()
                 if "position" in pool.columns and "cost" in pool.columns:
-                    fh_result = solve_milp_team(pool, "predicted_points", budget=total_budget)
+                    fh_result = solve_milp_team(pool, "predicted_points", budget=total_budget, captain_col=cap_col)
                     if fh_result:
                         fh_pts = fh_result["starting_points"]
                         values[gw] = round(max(0, fh_pts - current_pts), 1)
@@ -712,7 +710,7 @@ class MultiWeekPlanner:
                 pts = self._squad_points_with_captain(squad_preds)
 
                 # BB/TC chip adjustments
-                if gw_chip == "bboost" and len(squad_preds) >= 15:
+                if gw_chip == "bboost" and len(squad_preds) > 11:
                     top11 = self._select_formation_xi(squad_preds)
                     bench = squad_preds[~squad_preds.index.isin(top11.index)]
                     pts += bench["predicted_points"].sum()
@@ -743,18 +741,19 @@ class MultiWeekPlanner:
                 pool = gw_df.dropna(subset=["predicted_points"])
                 if "position" in pool.columns and "cost" in pool.columns:
                     cap_col = "captain_score" if "captain_score" in pool.columns else None
-                    result = solve_transfer_milp(
+                    result = solve_transfer_milp_with_hits(
                         pool, squad_ids, "predicted_points",
-                        budget=budget, max_transfers=use_now,
+                        budget=budget, free_transfers=ft,
+                        max_transfers=use_now,
                         captain_col=cap_col,
                     )
                     if result:
-                        pts = result["starting_points"]
+                        pts = result.get("net_points", result["starting_points"])
 
                         # BB/TC chip adjustments on transfer GWs
                         if gw_chip == "bboost":
                             bench_pts = sum(
-                                p.get("predicted_points", 0)
+                                p.get("predicted_points") or 0
                                 for p in result.get("bench", [])
                             )
                             pts += bench_pts
@@ -762,7 +761,7 @@ class MultiWeekPlanner:
                             # TC: add one more captain's predicted_points (3x total)
                             for p in result.get("starters", []):
                                 if p.get("player_id") == result["captain_id"]:
-                                    pts += p.get("predicted_points", 0)
+                                    pts += p.get("predicted_points") or 0
                                     break
 
                         new_squad_ids = {p["player_id"] for p in result["players"]}
@@ -785,17 +784,17 @@ class MultiWeekPlanner:
                             "gw": gw,
                             "transfers_in": [
                                 {"player_id": p["player_id"],
-                                 "web_name": p.get("web_name", ""),
-                                 "position": p.get("position", ""),
-                                 "cost": p.get("cost", 0),
-                                 "predicted_points": round(p.get("predicted_points", 0), 2)}
+                                 "web_name": p.get("web_name", "") or "",
+                                 "position": p.get("position", "") or "",
+                                 "cost": p.get("cost") or 0,
+                                 "predicted_points": round(p.get("predicted_points") or 0, 2)}
                                 for p in result["players"] if p["player_id"] in transfers_in
                             ],
                             "transfers_out": [
                                 {"player_id": pid,
-                                 "web_name": out_meta.get(pid, {}).get("web_name", "Unknown"),
-                                 "position": out_meta.get(pid, {}).get("position", ""),
-                                 "cost": out_meta.get(pid, {}).get("cost", 0)}
+                                 "web_name": out_meta.get(pid, {}).get("web_name") or "Unknown",
+                                 "position": out_meta.get(pid, {}).get("position") or "",
+                                 "cost": out_meta.get(pid, {}).get("cost") or 0}
                                 for pid in transfers_out
                             ],
                             "ft_used": len(transfers_in),
@@ -901,12 +900,17 @@ class CaptainPlanner:
             if squad_preds.empty:
                 continue
 
-            # Sort by captain_score (upside-weighted) if available, else predicted_points
-            score_col = "captain_score" if "captain_score" in squad_preds.columns else "predicted_points"
-            squad_preds = squad_preds.sort_values(score_col, ascending=False)
+            # Captain must be a starter — select formation-valid XI first
+            xi = MultiWeekPlanner._select_formation_xi(squad_preds)
+            if xi.empty:
+                continue
 
-            captain = squad_preds.iloc[0]
-            vc = squad_preds.iloc[1] if len(squad_preds) > 1 else captain
+            # Sort by captain_score (upside-weighted) if available, else predicted_points
+            score_col = "captain_score" if "captain_score" in xi.columns else "predicted_points"
+            xi = xi.sort_values(score_col, ascending=False)
+
+            captain = xi.iloc[0]
+            vc = xi.iloc[1] if len(xi) > 1 else captain
 
             captain_pts = captain["predicted_points"]
             confidence = captain.get("confidence", 1.0)

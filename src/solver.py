@@ -444,6 +444,10 @@ def solve_transfer_milp_with_hits(
         best["hit_cost"] = 0.0
         best["net_points"] = round(best_net, 2)
 
+    # Count forced replacements — current players missing from pool are unavoidable
+    pool_ids = set(player_df["player_id"].dropna().astype(int))
+    forced_replacements = len(current_player_ids - pool_ids)
+
     for n in range(1, max_transfers + 1):
         result = solve_transfer_milp(
             player_df, current_player_ids, target_col,
@@ -453,7 +457,8 @@ def solve_transfer_milp_with_hits(
         if result is None:
             continue
         actual = len(result["transfers_in_ids"])
-        hits = max(0, actual - free_transfers)
+        voluntary = max(0, actual - forced_replacements)
+        hits = max(0, voluntary - free_transfers)
         net = result["starting_points"] - hits * hit_cost
         if net > best_net:
             best_net = net
