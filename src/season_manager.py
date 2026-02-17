@@ -770,6 +770,7 @@ class SeasonManager:
             bank_analysis_json=json.dumps(bank_analysis),
             new_squad_json=new_squad_json,
             predicted_points=predicted_points,
+            free_transfers=free_transfers,
         )
 
         log(f"Recommendation saved for GW{next_gw}.")
@@ -1477,6 +1478,7 @@ class SeasonManager:
             bank_analysis_json=json.dumps({}),
             new_squad_json=json.dumps(scrub_nan(result["players"])),
             predicted_points=result["starting_points"],
+            free_transfers=1,
         )
 
         # Save strategic plan

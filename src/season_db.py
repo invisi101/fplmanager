@@ -85,6 +85,7 @@ class SeasonDB:
                     bank_analysis_json TEXT,
                     new_squad_json TEXT,
                     predicted_points REAL,
+                    free_transfers INTEGER,
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
                     UNIQUE(season_id, gameweek)
                 );
@@ -170,6 +171,11 @@ class SeasonDB:
                 conn.execute("SELECT team_code FROM fixture_calendar LIMIT 1")
             except sqlite3.OperationalError:
                 conn.execute("ALTER TABLE fixture_calendar ADD COLUMN team_code INTEGER")
+            # Migrate: add free_transfers to recommendation if missing
+            try:
+                conn.execute("SELECT free_transfers FROM recommendation LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE recommendation ADD COLUMN free_transfers INTEGER")
             conn.commit()
 
     # -----------------------------------------------------------------------
@@ -318,8 +324,8 @@ class SeasonDB:
                 """INSERT INTO recommendation
                    (season_id, gameweek, transfers_json, captain_id, captain_name,
                     chip_suggestion, chip_values_json, bank_analysis_json,
-                    new_squad_json, predicted_points)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    new_squad_json, predicted_points, free_transfers)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(season_id, gameweek) DO UPDATE SET
                      transfers_json=excluded.transfers_json,
                      captain_id=excluded.captain_id,
@@ -329,6 +335,7 @@ class SeasonDB:
                      bank_analysis_json=excluded.bank_analysis_json,
                      new_squad_json=excluded.new_squad_json,
                      predicted_points=excluded.predicted_points,
+                     free_transfers=excluded.free_transfers,
                      created_at=datetime('now')""",
                 (
                     season_id, gameweek,
@@ -340,6 +347,7 @@ class SeasonDB:
                     kwargs.get("bank_analysis_json"),
                     kwargs.get("new_squad_json"),
                     kwargs.get("predicted_points"),
+                    kwargs.get("free_transfers"),
                 ),
             )
             conn.commit()

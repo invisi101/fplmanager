@@ -3751,6 +3751,32 @@ function renderRecommendation(rec) {
     html += '<p style="color:var(--text2);font-size:13px;margin-bottom:12px">No transfers recommended (bank your FT)</p>';
   }
 
+  // Transfer cost breakdown
+  const nTransfers = hasPairs ? transfers.length : Math.max(
+    transfers.filter(t => t.direction === 'in').length,
+    transfers.filter(t => t.direction === 'out').length
+  );
+  const freeFTs = rec.free_transfers != null ? rec.free_transfers : null;
+  const isUnlimitedChip = rec.chip_suggestion === 'wildcard' || rec.chip_suggestion === 'freehit';
+  if (nTransfers > 0 && isUnlimitedChip) {
+    const chipLabel = rec.chip_suggestion === 'wildcard' ? 'Wildcard' : 'Free Hit';
+    html += `<div style="font-size:12px;margin-bottom:12px;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;display:inline-block">
+      Transfers: <strong>${nTransfers}</strong> &mdash; <span style="color:var(--green)">All free (${chipLabel})</span>
+    </div>`;
+  } else if (nTransfers > 0 && freeFTs != null) {
+    const paidTransfers = Math.max(0, nTransfers - freeFTs);
+    let ftText;
+    if (paidTransfers > 0) {
+      const hitCost = paidTransfers * 4;
+      ftText = `<span style="color:var(--green)">${freeFTs} free</span> + <span style="color:var(--red);font-weight:600">${paidTransfers} hit (-${hitCost}pts)</span>`;
+    } else {
+      ftText = `<span style="color:var(--green)">${nTransfers} of ${freeFTs} free transfer${freeFTs > 1 ? 's' : ''} used</span>`;
+    }
+    html += `<div style="font-size:12px;margin-bottom:12px;padding:6px 10px;background:var(--surface);border:1px solid var(--border);border-radius:6px;display:inline-block">
+      Transfers: <strong>${nTransfers}</strong> &mdash; ${ftText}
+    </div>`;
+  }
+
   // Captain
   html += `<div style="margin-bottom:10px;padding:8px 14px;background:var(--surface);border:2px solid #ef4444;border-radius:8px;display:inline-block">
     <span style="font-size:13px;color:var(--text2)">Captain:</span>
@@ -3774,38 +3800,88 @@ function renderRecommendation(rec) {
     html += '</div>';
   }
 
-  // Bank analysis (multi-week lookahead)
+  // Transfer planner: use now vs bank for next week
   if (bankAnalysis.recommendation) {
     const strats = bankAnalysis.strategies || [];
     const best = bankAnalysis.best_strategy || {};
     const bestUse = best.use_this_week;
-    let recLabel;
-    if (bestUse === 0) recLabel = 'Bank your FT';
-    else if (bestUse === 1) recLabel = 'Use 1 FT';
-    else recLabel = `Use ${bestUse} FTs`;
+    const baFTs = bankAnalysis.free_transfers;
+    const gw = rec.gameweek;
+    const nextGw = gw + 1;
+
+    // Find bank baseline for relative comparisons
+    const bankStrat = strats.find(s => s.use_this_week === 0);
+    const bankTotal = bankStrat ? bankStrat.total_2week : null;
+
+    // Build the verdict sentence
+    let verdict;
+    if (bestUse === 0) {
+      verdict = `Save your transfer${baFTs > 1 ? 's' : ''} — you'll have <strong>${best.fts_next_week} FT${best.fts_next_week > 1 ? 's' : ''}</strong> for GW${nextGw}`;
+      if (bankTotal != null) {
+        const useStrat = strats.find(s => s.use_this_week > 0);
+        if (useStrat) {
+          const cost = bankTotal - useStrat.total_2week;
+          if (cost > 0) verdict += `, which is worth <span style="color:var(--green);font-weight:600">+${cost.toFixed(1)} pts</span> over transferring now`;
+        }
+      }
+    } else {
+      const hitTransfers = Math.max(0, bestUse - baFTs);
+      if (hitTransfers > 0) {
+        verdict = `Make <strong>${bestUse} transfer${bestUse > 1 ? 's' : ''}</strong> now (${baFTs} free + ${hitTransfers} hit)`;
+      } else {
+        verdict = `Use <strong>${bestUse}</strong> of your <strong>${baFTs}</strong> free transfer${baFTs > 1 ? 's' : ''}`;
+      }
+      if (bankTotal != null) {
+        const gain = best.total_2week - bankTotal;
+        if (gain > 0) verdict += ` — gains <span style="color:var(--green);font-weight:600">+${gain.toFixed(1)} pts</span> over banking`;
+        else if (gain === 0) verdict += ` — same total as banking, but a stronger GW${gw} squad`;
+      }
+    }
 
     html += `<div style="margin-top:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:8px">2-Week Lookahead</div>
-      <div style="margin-bottom:8px">
-        <span style="font-size:13px">Best strategy:</span>
-        <span style="color:var(--accent);font-weight:700;font-size:14px;margin-left:6px">${recLabel}</span>
-        <span style="color:var(--text2);font-size:12px;margin-left:6px">(${best.total_2week?.toFixed(1) || '-'} pts over 2 weeks)</span>
-      </div>`;
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">Use or bank your transfer${baFTs > 1 ? 's' : ''}?</div>
+      <div style="font-size:13px;margin-bottom:10px;line-height:1.5">${verdict}</div>`;
 
     if (strats.length > 1) {
-      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px">';
+      html += `<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Projected starting XI points for each option:</div>`;
+      html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">';
       for (const s of strats) {
         const isBest = s.use_this_week === bestUse;
         const border = isBest ? 'border-color:var(--accent)' : '';
-        const label = s.use_this_week === 0 ? 'Bank' : `Use ${s.use_this_week} FT${s.use_this_week > 1 ? 's' : ''}`;
+
+        // Card title
+        let title;
+        if (s.use_this_week === 0) {
+          title = 'Save transfer' + (baFTs > 1 ? 's' : '');
+        } else {
+          title = `Transfer ${s.use_this_week} player${s.use_this_week > 1 ? 's' : ''} now`;
+        }
+
+        // Relative difference vs bank baseline
+        let diffBadge = '';
+        if (bankTotal != null && s.use_this_week > 0) {
+          const diff = s.total_2week - bankTotal;
+          const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+          const diffColor = diff > 0 ? 'var(--green)' : diff < 0 ? 'var(--red)' : 'var(--text2)';
+          diffBadge = `<span style="font-size:11px;color:${diffColor};font-weight:600;margin-left:auto">${diffStr}</span>`;
+        }
+
+        // Footer: consequence for next week
+        let footer = s.use_this_week === 0
+          ? `Then ${s.fts_next_week} FT${s.fts_next_week > 1 ? 's' : ''} available for GW${nextGw}`
+          : `Leaves ${s.fts_next_week} FT${s.fts_next_week > 1 ? 's' : ''} for GW${nextGw}`;
+
         html += `<div style="padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;${border}">
-          <div style="font-weight:600;font-size:13px;margin-bottom:4px">${label}${isBest ? ' *' : ''}</div>
-          <div style="font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:1px 8px">
-            <span style="color:var(--text2)">This GW</span><span style="text-align:right">${s.week1_points?.toFixed(1)}</span>
-            <span style="color:var(--text2)">Next GW</span><span style="text-align:right">${s.week2_points?.toFixed(1)}</span>
-            <span style="color:var(--text2)">Total</span><span style="text-align:right;font-weight:700;color:${isBest ? 'var(--green)' : 'var(--text)'}">${s.total_2week?.toFixed(1)}</span>
+          <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px">
+            <span style="font-weight:600;font-size:13px">${title}${isBest ? ' *' : ''}</span>
+            ${diffBadge}
           </div>
-          <div style="font-size:11px;color:var(--text2);margin-top:3px">Then ${s.fts_next_week} FT${s.fts_next_week > 1 ? 's' : ''} next week</div>
+          <div style="font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:1px 8px">
+            <span style="color:var(--text2)">GW${gw}</span><span style="text-align:right">${s.week1_points?.toFixed(1)}</span>
+            <span style="color:var(--text2)">GW${nextGw}</span><span style="text-align:right">${s.week2_points?.toFixed(1)}</span>
+            <span style="color:var(--text2)">Combined</span><span style="text-align:right;font-weight:700;color:${isBest ? 'var(--green)' : 'var(--text)'}">${s.total_2week?.toFixed(1)}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:4px">${footer}</div>
         </div>`;
       }
       html += '</div>';
