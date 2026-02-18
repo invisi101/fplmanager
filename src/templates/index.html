@@ -1541,8 +1541,6 @@
         <div id="watchlistDropdown" style="display:none;position:absolute;top:36px;left:0;width:320px;max-height:200px;overflow-y:auto;background:var(--surface2);border:1px solid var(--border);border-radius:6px;z-index:100"></div>
       </div>
       <div id="watchlistContainer"></div>
-      <h4 style="margin:16px 0 8px;font-size:14px">Price History</h4>
-      <div class="season-chart-box"><canvas id="priceHistoryChart" height="200"></canvas></div>
       <h4 style="margin:16px 0 8px;font-size:14px">Squad Prices</h4>
       <div id="priceTableContainer"></div>
     </div>
@@ -4104,7 +4102,6 @@ function loadPrices() {
     });
   loadPricePredictions();
   loadWatchlist();
-  loadPriceHistory();
 }
 
 function updatePrices() {
@@ -4175,8 +4172,8 @@ function loadPricePredictions() {
         el.innerHTML = '<p style="color:var(--text2);font-size:13px">No price movements predicted.</p>';
         return;
       }
-      const risers = preds.filter(p => p.direction === 'rise').slice(0, 10);
-      const fallers = preds.filter(p => p.direction === 'fall').slice(0, 10);
+      const risers = preds.filter(p => p.direction === 'rise').slice(0, 30);
+      const fallers = preds.filter(p => p.direction === 'fall').slice(0, 30);
       let html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
       // Risers
       html += '<div><h5 style="color:var(--green);margin-bottom:6px;font-size:13px">Likely Risers</h5>';
@@ -4201,86 +4198,6 @@ function loadPricePredictions() {
       } else { html += '<p style="color:var(--text2);font-size:12px">None</p>'; }
       html += '</div></div>';
       el.innerHTML = html;
-    });
-}
-
-function loadPriceHistory() {
-  const mid = getSeasonManagerId();
-  if (!mid) return;
-  fetch(`/api/season/price-history?manager_id=${mid}&days=14`)
-    .then(r => r.json())
-    .then(d => {
-      const history = d.history || {};
-      const playerIds = Object.keys(history);
-      if (!playerIds.length) return;
-      // Pick top 5 players with most snapshots
-      const sorted = playerIds.sort((a, b) => (history[b].snapshots || []).length - (history[a].snapshots || []).length).slice(0, 5);
-      const canvas = document.getElementById('priceHistoryChart');
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      const dpr = window.devicePixelRatio || 1;
-      const w = canvas.parentElement.clientWidth || 400;
-      const h = 200;
-      canvas.width = w * dpr; canvas.height = h * dpr;
-      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
-      ctx.scale(dpr, dpr);
-      ctx.clearRect(0, 0, w, h);
-      const pad = {l: 50, r: 10, t: 20, b: 30};
-      const cw = w - pad.l - pad.r;
-      const ch = h - pad.t - pad.b;
-      // Collect all dates and price range
-      let allDates = new Set();
-      let minP = Infinity, maxP = -Infinity;
-      sorted.forEach(pid => {
-        (history[pid].snapshots || []).forEach(s => {
-          allDates.add(s.date);
-          if (s.price < minP) minP = s.price;
-          if (s.price > maxP) maxP = s.price;
-        });
-      });
-      allDates = [...allDates].sort();
-      if (allDates.length < 2 || maxP === minP) { maxP = minP + 1; }
-      const colors = ['#6c63ff', '#2dd4a0', '#fbbf24', '#ef4444', '#38bdf8'];
-      // Grid
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      for (let i = 0; i <= 4; i++) {
-        const y = pad.t + (ch / 4) * i;
-        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
-      }
-      // Lines
-      sorted.forEach((pid, idx) => {
-        const snaps = (history[pid].snapshots || []).sort((a, b) => a.date.localeCompare(b.date));
-        if (snaps.length < 2) return;
-        ctx.strokeStyle = colors[idx % colors.length];
-        ctx.lineWidth = 2; ctx.lineJoin = 'round';
-        ctx.beginPath();
-        snaps.forEach((s, i) => {
-          const x = pad.l + (allDates.indexOf(s.date) / (allDates.length - 1)) * cw;
-          const y = pad.t + ch - ((s.price - minP) / (maxP - minP)) * ch;
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-        // Label
-        const last = snaps[snaps.length - 1];
-        const lx = pad.l + (allDates.indexOf(last.date) / (allDates.length - 1)) * cw;
-        const ly = pad.t + ch - ((last.price - minP) / (maxP - minP)) * ch;
-        ctx.fillStyle = colors[idx % colors.length];
-        ctx.font = '10px monospace'; ctx.textAlign = 'left';
-        ctx.fillText(history[pid].web_name, lx + 4, ly - 4);
-      });
-      // Y-axis
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '10px monospace'; ctx.textAlign = 'right';
-      for (let i = 0; i <= 4; i++) {
-        const val = minP + ((maxP - minP) / 4) * (4 - i);
-        ctx.fillText(val.toFixed(1), pad.l - 4, pad.t + (ch / 4) * i + 4);
-      }
-      // X-axis
-      ctx.textAlign = 'center';
-      const step = Math.max(1, Math.floor(allDates.length / 5));
-      for (let i = 0; i < allDates.length; i += step) {
-        const x = pad.l + (i / (allDates.length - 1)) * cw;
-        ctx.fillText(allDates[i].slice(5), x, h - 8);
-      }
     });
 }
 

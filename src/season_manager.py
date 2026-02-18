@@ -1,5 +1,6 @@
 """Business logic for season-long FPL management."""
 
+import bisect
 import json
 import sys
 import time
@@ -1973,14 +1974,14 @@ class SeasonManager:
 
         Uses: transfer_ratio = net_transfers / (ownership_pct * 100_000)
         Rise if ratio > 0.005, fall if < -0.005.
-        Probability = min(1.0, abs(ratio) / 0.01).
+        Probability = percentile rank of abs(ratio) among all qualifying players.
         """
         bootstrap = self._load_bootstrap()
         elements = bootstrap.get("elements", [])
         id_to_code = {t["id"]: t["code"] for t in bootstrap.get("teams", [])}
         code_to_short = {t["code"]: t["short_name"] for t in bootstrap.get("teams", [])}
 
-        predictions = []
+        raw = []
         for el in elements:
             net = el.get("transfers_in_event", 0) - el.get("transfers_out_event", 0)
             ownership = el.get("selected_by_percent")
@@ -2000,11 +2001,10 @@ class SeasonManager:
                 continue
 
             direction = "rise" if transfer_ratio > 0 else "fall"
-            probability = min(1.0, abs(transfer_ratio) / 0.01)
             estimated_change = 0.1 if direction == "rise" else -0.1
 
             tc = id_to_code.get(el.get("team"))
-            predictions.append({
+            raw.append({
                 "player_id": el["id"],
                 "web_name": el.get("web_name", "Unknown"),
                 "team": code_to_short.get(tc, ""),
@@ -2012,11 +2012,22 @@ class SeasonManager:
                 "ownership": ownership_pct,
                 "net_transfers": net,
                 "transfer_ratio": round(transfer_ratio, 6),
+                "abs_ratio": abs(transfer_ratio),
                 "direction": direction,
-                "probability": round(probability, 3),
                 "estimated_change": estimated_change,
             })
 
+        # Probability = percentile rank among qualifying players
+        if raw:
+            sorted_ratios = sorted(r["abs_ratio"] for r in raw)
+            n = len(sorted_ratios)
+            for r in raw:
+                # bisect to find position, convert to 0.5-1.0 range
+                rank = bisect.bisect_left(sorted_ratios, r["abs_ratio"])
+                r["probability"] = round(0.5 + 0.5 * rank / (n - 1), 3) if n > 1 else 1.0
+                del r["abs_ratio"]
+
+        predictions = raw
         predictions.sort(key=lambda p: p["probability"], reverse=True)
         return predictions
 
