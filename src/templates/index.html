@@ -1474,13 +1474,22 @@
 
 <!-- Team Form Panel -->
 <div class="content teamform-panel" id="teamFormPanel">
-  <div style="max-height:calc(100vh - 180px); overflow-y:auto">
+  <div class="controls-row" id="formControls" style="display:none">
+    <label style="font-weight:600">GW Range:</label>
+    <input type="number" class="budget-input" id="formGwFrom" min="1" max="38" style="width:60px">
+    <span style="color:var(--text2)">to</span>
+    <input type="number" class="budget-input" id="formGwTo" min="1" max="38" style="width:60px">
+    <button class="btn btn-primary" onclick="applyFormRange()">Apply</button>
+    <button class="btn" onclick="resetFormRange()">All GWs</button>
+    <span id="formRangeLabel" style="font-size:12px;color:var(--text2)"></span>
+  </div>
+  <div style="max-height:calc(100vh - 220px); overflow-y:auto">
     <table class="form-table" id="formTable">
       <thead id="formTableHead"></thead>
       <tbody id="formTableBody"></tbody>
     </table>
   </div>
-  <div class="empty-state" id="formEmptyState"><h3>Team Form</h3><p>Loading last 10 gameweeks...</p></div>
+  <div class="empty-state" id="formEmptyState"><h3>Team Form</h3><p>Loading...</p></div>
 </div>
 
 <!-- Match Detail Modal -->
@@ -2121,6 +2130,8 @@ let formData = null;
 let formMatchDetails = {};
 let formSortKey = 'form_points';
 let formSortAsc = false;
+let formGwFrom = null;
+let formGwTo = null;
 
 function loadTeamForm() {
   if (formData) { renderFormTable(); return; }
@@ -2141,6 +2152,20 @@ function loadTeamForm() {
         arr.forEach(r => { if (r.fixture_id) formMatchDetails[r.fixture_id] = r.match_detail; });
       });
     });
+    // Default to last 10 GWs
+    const allGws = d.gw_columns;
+    if (allGws.length > 10) {
+      formGwFrom = allGws[allGws.length - 10];
+      formGwTo = allGws[allGws.length - 1];
+    } else {
+      formGwFrom = allGws[0];
+      formGwTo = allGws[allGws.length - 1];
+    }
+    document.getElementById('formGwFrom').value = formGwFrom;
+    document.getElementById('formGwTo').value = formGwTo;
+    document.getElementById('formGwFrom').max = allGws[allGws.length - 1];
+    document.getElementById('formGwTo').max = allGws[allGws.length - 1];
+    document.getElementById('formControls').style.display = '';
     empty.style.display = 'none';
     table.style.display = 'table';
     renderFormTable();
@@ -2149,14 +2174,33 @@ function loadTeamForm() {
   });
 }
 
+function getVisibleGws() {
+  if (!formData) return [];
+  return formData.gw_columns.filter(gw => gw >= formGwFrom && gw <= formGwTo);
+}
+
+function calcFormPoints(team, gws) {
+  let pts = 0;
+  gws.forEach(gw => {
+    (team.results[String(gw)] || []).forEach(r => {
+      pts += r.result === 'W' ? 3 : r.result === 'D' ? 1 : 0;
+    });
+  });
+  return pts;
+}
+
 function renderFormTable() {
   if (!formData) return;
-  const gws = formData.gw_columns;
+  const gws = getVisibleGws();
   const thead = document.getElementById('formTableHead');
   const tbody = document.getElementById('formTableBody');
+  const label = document.getElementById('formRangeLabel');
+  label.textContent = `Showing GW${gws[0]}–GW${gws[gws.length - 1]} (${gws.length} GWs)`;
 
-  // Sort teams
-  let teams = [...formData.teams];
+  // Calculate form points for visible range
+  let teams = formData.teams.map(t => ({...t, form_points: calcFormPoints(t, gws)}));
+
+  // Sort
   if (formSortKey === 'name') {
     teams.sort((a, b) => formSortAsc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name));
   } else {
@@ -2176,7 +2220,8 @@ function renderFormTable() {
   tbody.innerHTML = '';
   teams.forEach(t => {
     const tr = document.createElement('tr');
-    let cells = `<td>${t.short}</td><td>${t.form_points}</td>`;
+    const badge = t.code ? `<img src="https://resources.premierleague.com/premierleague/badges/25/t${t.code}.png" width="20" height="20" style="vertical-align:middle;margin-right:6px" alt="">` : '';
+    let cells = `<td>${badge}${t.short}</td><td>${t.form_points}</td>`;
     gws.forEach(gw => {
       const results = t.results[String(gw)] || [];
       if (results.length === 0) {
@@ -2193,6 +2238,25 @@ function renderFormTable() {
     tr.innerHTML = cells;
     tbody.appendChild(tr);
   });
+}
+
+function applyFormRange() {
+  const from = parseInt(document.getElementById('formGwFrom').value);
+  const to = parseInt(document.getElementById('formGwTo').value);
+  if (!from || !to || from > to) return;
+  formGwFrom = from;
+  formGwTo = to;
+  renderFormTable();
+}
+
+function resetFormRange() {
+  if (!formData) return;
+  const allGws = formData.gw_columns;
+  formGwFrom = allGws[0];
+  formGwTo = allGws[allGws.length - 1];
+  document.getElementById('formGwFrom').value = formGwFrom;
+  document.getElementById('formGwTo').value = formGwTo;
+  renderFormTable();
 }
 
 function sortFormTable(key) {

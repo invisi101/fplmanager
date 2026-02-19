@@ -1494,13 +1494,12 @@ def api_team_form():
     fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
     bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
 
-    team_info = {t["id"]: {"name": t["name"], "short": t["short_name"]} for t in bootstrap.get("teams", [])}
+    team_info = {t["id"]: {"name": t["name"], "short": t["short_name"], "code": t.get("code")} for t in bootstrap.get("teams", [])}
     element_map = {el["id"]: el.get("web_name", "Unknown") for el in bootstrap.get("elements", [])}
 
-    # Find last 10 distinct finished GW numbers
+    # All distinct finished GW numbers
     finished_gws = sorted({f["event"] for f in fixtures if f.get("finished") and f.get("event")})
-    last_10_gws = finished_gws[-10:] if len(finished_gws) >= 10 else finished_gws
-    gw_set = set(last_10_gws)
+    gw_set = set(finished_gws)
 
     # Build per-team results
     teams = {}
@@ -1509,8 +1508,9 @@ def api_team_form():
             "team_id": t_id,
             "name": t_info["name"],
             "short": t_info["short"],
+            "code": t_info.get("code"),
             "form_points": 0,
-            "results": {str(gw): [] for gw in last_10_gws},
+            "results": {str(gw): [] for gw in finished_gws},
         }
 
     for f in fixtures:
@@ -1558,7 +1558,7 @@ def api_team_form():
             teams[a_id]["form_points"] += 3 if a_result == "W" else (1 if a_result == "D" else 0)
 
     return jsonify({
-        "gw_columns": last_10_gws,
+        "gw_columns": finished_gws,
         "teams": sorted(teams.values(), key=lambda t: -t["form_points"]),
     })
 
