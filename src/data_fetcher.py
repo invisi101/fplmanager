@@ -211,6 +211,12 @@ def fetch_manager_transfers(manager_id: int) -> list[dict]:
     return _cached_manager_fetch(f"transfers_{manager_id}", lambda: _fetch_url(url).json())
 
 
+def fetch_player_summary(player_id: int) -> dict:
+    """Fetch player element summary (per-GW history with prices, fixtures)."""
+    url = f"{FPL_API_BASE}/element-summary/{player_id}/"
+    return _cached_manager_fetch(f"player_summary_{player_id}", lambda: _fetch_url(url).json())
+
+
 def _detect_max_gw(season: str, force: bool = False) -> int:
     """Detect the latest available gameweek for a per-GW layout season."""
     cache_file = _cache_path(f"{season}_playerstats.csv")

@@ -29,6 +29,7 @@ from src.data_fetcher import (
     fetch_manager_entry,
     fetch_manager_picks,
     fetch_manager_history,
+    fetch_player_summary,
 )
 from src.feature_engineering import build_features, get_feature_columns
 from src.feature_selection import generate_xgb_importance_charts, run_feature_selection
@@ -1888,6 +1889,19 @@ def api_player_detail(player_id):
             except Exception:
                 pass
 
+    # --- Price history from FPL element summary API ---
+    price_history = []
+    try:
+        summary = fetch_player_summary(player_id)
+        price_by_gw = {}
+        for h in summary.get("history", []):
+            gw = h.get("round")
+            price_by_gw[gw] = round(h.get("value", 0) / 10, 1)
+        for gw in sorted(price_by_gw):
+            price_history.append({"gw": gw, "price": price_by_gw[gw]})
+    except Exception:
+        pass
+
     return jsonify({
         "player": player_info,
         "gw_history": gw_history,
@@ -1895,6 +1909,7 @@ def api_player_detail(player_id):
         "upcoming_fixtures": upcoming,
         "predictions": predictions,
         "available_gws": available_gws,
+        "price_history": price_history,
     })
 
 

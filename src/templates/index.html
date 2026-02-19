@@ -5410,6 +5410,12 @@ function renderPlayerDetail(d) {
   html += `<div class="player-section-title">Points per Gameweek (${rangeLabel})</div>
   <div style="width:100%;margin-bottom:16px"><canvas id="playerPtsChart"></canvas></div>`;
 
+  // --- Price history chart ---
+  if (d.price_history && d.price_history.length > 1) {
+    html += `<div class="player-section-title">Price History</div>
+    <div style="width:100%;margin-bottom:16px"><canvas id="playerPriceChart"></canvas></div>`;
+  }
+
   // --- Upcoming fixtures ---
   if (d.upcoming_fixtures && d.upcoming_fixtures.length > 0) {
     html += `<div class="player-section-title">Upcoming Fixtures</div><div class="fixture-chips">`;
@@ -5490,12 +5496,15 @@ function renderPlayerDetail(d) {
 
   document.getElementById('playersContent').innerHTML = html;
 
-  // Draw bar chart
-  if (filteredHistory.length > 0) {
-    setTimeout(() => {
+  // Draw charts
+  setTimeout(() => {
+    if (filteredHistory.length > 0) {
       drawBarChart('playerPtsChart', filteredHistory, 'gw', 'event_points', {color: '#2dd4a0'});
-    }, 50);
-  }
+    }
+    if (d.price_history && d.price_history.length > 1) {
+      drawLineChart('playerPriceChart', d.price_history, 'gw', 'price', {color: '#f59e0b', decimals: 1});
+    }
+  }, 50);
 }
 
 function updatePlayersBreadcrumb() {
