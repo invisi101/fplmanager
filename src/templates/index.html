@@ -707,6 +707,63 @@
   .form-d { background: #6b7280; }
   .form-l { background: var(--red); }
 
+  /* Team Form panel */
+  .teamform-panel { display: none; }
+  .teamform-panel.visible { display: block; }
+
+  .form-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .form-table th {
+    padding: 8px 6px; text-align: center; font-weight: 600; color: var(--text2);
+    border-bottom: 2px solid var(--border); position: sticky; top: 0;
+    background: var(--bg); z-index: 1; cursor: pointer; user-select: none;
+    white-space: nowrap;
+  }
+  .form-table th:first-child, .form-table th:nth-child(2) { text-align: left; }
+  .form-table th .sort-arrow { font-size: 10px; margin-left: 2px; opacity: 0.5; }
+  .form-table th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+  .form-table td {
+    padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: center;
+    vertical-align: middle;
+  }
+  .form-table td:first-child { text-align: left; font-weight: 600; }
+  .form-table td:nth-child(2) { text-align: center; }
+  .form-table tr:hover td { background: var(--surface2); }
+
+  .result-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: filter 0.15s; line-height: 1.2;
+    min-width: 56px; color: #fff;
+  }
+  .result-badge:hover { filter: brightness(1.2); }
+  .result-badge.win { background: #22c55e; }
+  .result-badge.draw { background: #6b7280; }
+  .result-badge.loss { background: var(--red); }
+  .result-badge .opp { font-size: 10px; opacity: 0.85; margin-left: 4px; text-transform: lowercase; }
+
+  .dgw-cell { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+  .bgw-marker { color: var(--text2); font-size: 11px; }
+
+  .match-modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+    z-index: 1000; align-items: center; justify-content: center;
+  }
+  .match-modal-overlay.visible { display: flex; }
+  .match-modal-content {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+    padding: 0; max-width: 420px; width: 90%; max-height: 80vh; overflow-y: auto;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+  }
+  .match-modal-close {
+    position: sticky; top: 0; text-align: right; padding: 8px 12px;
+    background: var(--bg); z-index: 1;
+  }
+  .match-modal-close button {
+    background: none; border: none; color: var(--text2); font-size: 20px;
+    cursor: pointer; padding: 4px 8px;
+  }
+  .match-modal-close button:hover { color: var(--text); }
+
   /* GW Scores panel */
   .gwscores-panel { display: none; }
   .gwscores-panel.visible { display: block; }
@@ -1288,6 +1345,7 @@
   <div class="tab" data-view="gwcompare" onclick="switchTab(this)">⚖️ GW Compare</div>
   <div class="tab" data-view="pltable" onclick="switchTab(this)">📊 PL Table</div>
   <div class="tab" data-view="gwscores" onclick="switchTab(this)">⚽ GW Scores</div>
+  <div class="tab" data-view="teamform" onclick="switchTab(this)">📈 Form</div>
   <div class="tab" data-view="season" onclick="switchTab(this)">📅 Season</div>
 </div>
 
@@ -1411,6 +1469,25 @@
   </div>
   <div class="scores-grid" id="gwScoresGrid">
     <div class="empty-state"><h3>GW Scores</h3><p>Select a gameweek above and click "Load" to see match results.</p></div>
+  </div>
+</div>
+
+<!-- Team Form Panel -->
+<div class="content teamform-panel" id="teamFormPanel">
+  <div style="max-height:calc(100vh - 180px); overflow-y:auto">
+    <table class="form-table" id="formTable">
+      <thead id="formTableHead"></thead>
+      <tbody id="formTableBody"></tbody>
+    </table>
+  </div>
+  <div class="empty-state" id="formEmptyState"><h3>Team Form</h3><p>Loading last 10 gameweeks...</p></div>
+</div>
+
+<!-- Match Detail Modal -->
+<div class="match-modal-overlay" id="matchModal" onclick="if(event.target===this)closeMatchModal()">
+  <div class="match-modal-content">
+    <div class="match-modal-close"><button onclick="closeMatchModal()">&times;</button></div>
+    <div id="matchModalBody"></div>
   </div>
 </div>
 
@@ -1928,6 +2005,90 @@ function loadPLTable() {
 }
 
 // ---------------------------------------------------------------------------
+// Shared: Match Card HTML renderer (used by GW Scores + Team Form modal)
+// ---------------------------------------------------------------------------
+function renderMatchCardHtml(m) {
+  let scoreHtml;
+  if (m.finished || m.started) {
+    scoreHtml = `<span class="score">${m.home_score ?? '?'} - ${m.away_score ?? '?'}</span>`;
+  } else {
+    scoreHtml = '<span class="vs">vs</span>';
+  }
+
+  let koText = '';
+  if (m.kickoff) {
+    const dt = new Date(m.kickoff);
+    koText = dt.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'}) + ' ' +
+             dt.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
+  }
+
+  let eventsHtml = '';
+  if (m.finished || m.started) {
+    const allGoals = [];
+    (m.goals?.home || []).forEach(g => {
+      const cnt = g.count > 1 ? ` x${g.count}` : '';
+      allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.home_short}</span> ${g.player}${cnt}</div>`);
+    });
+    (m.goals?.away || []).forEach(g => {
+      const cnt = g.count > 1 ? ` x${g.count}` : '';
+      allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.away_short}</span> ${g.player}${cnt}</div>`);
+    });
+    (m.own_goals?.home || []).forEach(g => {
+      allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.home_short}</span> ${g.player} <span style="color:var(--text2)">(OG)</span></div>`);
+    });
+    (m.own_goals?.away || []).forEach(g => {
+      allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.away_short}</span> ${g.player} <span style="color:var(--text2)">(OG)</span></div>`);
+    });
+
+    const allAssists = [];
+    (m.assists?.home || []).forEach(a => {
+      allAssists.push(`<div class="match-event"><span class="ev-icon">🅰️</span><span class="ev-side">${m.home_short}</span> ${a.player}</div>`);
+    });
+    (m.assists?.away || []).forEach(a => {
+      allAssists.push(`<div class="match-event"><span class="ev-icon">🅰️</span><span class="ev-side">${m.away_short}</span> ${a.player}</div>`);
+    });
+
+    const allCards = [];
+    (m.yellow_cards?.home || []).forEach(c => {
+      allCards.push(`<div class="match-event"><span class="ev-icon">🟡</span><span class="ev-side">${m.home_short}</span> ${c.player}</div>`);
+    });
+    (m.yellow_cards?.away || []).forEach(c => {
+      allCards.push(`<div class="match-event"><span class="ev-icon">🟡</span><span class="ev-side">${m.away_short}</span> ${c.player}</div>`);
+    });
+    (m.red_cards?.home || []).forEach(c => {
+      allCards.push(`<div class="match-event"><span class="ev-icon">🔴</span><span class="ev-side">${m.home_short}</span> ${c.player}</div>`);
+    });
+    (m.red_cards?.away || []).forEach(c => {
+      allCards.push(`<div class="match-event"><span class="ev-icon">🔴</span><span class="ev-side">${m.away_short}</span> ${c.player}</div>`);
+    });
+
+    const allBonus = [];
+    const bonusAll = [...(m.bonus?.home || []), ...(m.bonus?.away || [])];
+    bonusAll.sort((a, b) => b.points - a.points);
+    bonusAll.forEach(b => {
+      allBonus.push(`<div class="match-event"><span class="bonus-badge">${b.points}</span> ${b.player}</div>`);
+    });
+
+    if (allGoals.length) eventsHtml += allGoals.join('');
+    if (allAssists.length) eventsHtml += allAssists.join('');
+    if (allCards.length) eventsHtml += allCards.join('');
+    if (allBonus.length) eventsHtml += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${allBonus.join('')}</div>`;
+  }
+
+  return `<div class="match-card">
+    <div class="match-card-header">
+      <span class="team-short">${m.home_short}</span>
+      ${scoreHtml}
+      <span class="team-short">${m.away_short}</span>
+    </div>
+    <div class="match-card-body">
+      <div class="kickoff-time">${koText}</div>
+      <div class="match-events">${eventsHtml}</div>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // GW Scores
 // ---------------------------------------------------------------------------
 function loadGWScores() {
@@ -1947,103 +2108,112 @@ function loadGWScores() {
       return;
     }
     status.textContent = `${d.matches.length} matches`;
-    grid.innerHTML = '';
-
-    d.matches.forEach(m => {
-      const card = document.createElement('div');
-      card.className = 'match-card';
-
-      // Header: score or vs
-      let scoreHtml;
-      if (m.finished || m.started) {
-        scoreHtml = `<span class="score">${m.home_score ?? '?'} - ${m.away_score ?? '?'}</span>`;
-      } else {
-        scoreHtml = '<span class="vs">vs</span>';
-      }
-
-      // Format kickoff
-      let koText = '';
-      if (m.kickoff) {
-        const dt = new Date(m.kickoff);
-        koText = dt.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'}) + ' ' +
-                 dt.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
-      }
-
-      // Build events
-      let eventsHtml = '';
-      if (m.finished || m.started) {
-        // Goals
-        const allGoals = [];
-        (m.goals?.home || []).forEach(g => {
-          const cnt = g.count > 1 ? ` x${g.count}` : '';
-          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.home_short}</span> ${g.player}${cnt}</div>`);
-        });
-        (m.goals?.away || []).forEach(g => {
-          const cnt = g.count > 1 ? ` x${g.count}` : '';
-          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.away_short}</span> ${g.player}${cnt}</div>`);
-        });
-        // Own goals
-        (m.own_goals?.home || []).forEach(g => {
-          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.home_short}</span> ${g.player} <span style="color:var(--text2)">(OG)</span></div>`);
-        });
-        (m.own_goals?.away || []).forEach(g => {
-          allGoals.push(`<div class="match-event"><span class="ev-icon">⚽</span><span class="ev-side">${m.away_short}</span> ${g.player} <span style="color:var(--text2)">(OG)</span></div>`);
-        });
-
-        // Assists
-        const allAssists = [];
-        (m.assists?.home || []).forEach(a => {
-          allAssists.push(`<div class="match-event"><span class="ev-icon">🅰️</span><span class="ev-side">${m.home_short}</span> ${a.player}</div>`);
-        });
-        (m.assists?.away || []).forEach(a => {
-          allAssists.push(`<div class="match-event"><span class="ev-icon">🅰️</span><span class="ev-side">${m.away_short}</span> ${a.player}</div>`);
-        });
-
-        // Cards
-        const allCards = [];
-        (m.yellow_cards?.home || []).forEach(c => {
-          allCards.push(`<div class="match-event"><span class="ev-icon">🟡</span><span class="ev-side">${m.home_short}</span> ${c.player}</div>`);
-        });
-        (m.yellow_cards?.away || []).forEach(c => {
-          allCards.push(`<div class="match-event"><span class="ev-icon">🟡</span><span class="ev-side">${m.away_short}</span> ${c.player}</div>`);
-        });
-        (m.red_cards?.home || []).forEach(c => {
-          allCards.push(`<div class="match-event"><span class="ev-icon">🔴</span><span class="ev-side">${m.home_short}</span> ${c.player}</div>`);
-        });
-        (m.red_cards?.away || []).forEach(c => {
-          allCards.push(`<div class="match-event"><span class="ev-icon">🔴</span><span class="ev-side">${m.away_short}</span> ${c.player}</div>`);
-        });
-
-        // Bonus
-        const allBonus = [];
-        const bonusAll = [...(m.bonus?.home || []), ...(m.bonus?.away || [])];
-        bonusAll.sort((a, b) => b.points - a.points);
-        bonusAll.forEach(b => {
-          allBonus.push(`<div class="match-event"><span class="bonus-badge">${b.points}</span> ${b.player}</div>`);
-        });
-
-        if (allGoals.length) eventsHtml += allGoals.join('');
-        if (allAssists.length) eventsHtml += allAssists.join('');
-        if (allCards.length) eventsHtml += allCards.join('');
-        if (allBonus.length) eventsHtml += `<div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border)">${allBonus.join('')}</div>`;
-      }
-
-      card.innerHTML = `
-        <div class="match-card-header">
-          <span class="team-short">${m.home_short}</span>
-          ${scoreHtml}
-          <span class="team-short">${m.away_short}</span>
-        </div>
-        <div class="match-card-body">
-          <div class="kickoff-time">${koText}</div>
-          <div class="match-events">${eventsHtml}</div>
-        </div>
-      `;
-      grid.appendChild(card);
-    });
+    grid.innerHTML = d.matches.map(m => renderMatchCardHtml(m)).join('');
   }).catch(err => {
     grid.innerHTML = `<div class="empty-state"><p style="color:var(--red)">Error: ${err.message}</p></div>`;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Team Form
+// ---------------------------------------------------------------------------
+let formData = null;
+let formMatchDetails = {};
+let formSortKey = 'form_points';
+let formSortAsc = false;
+
+function loadTeamForm() {
+  if (formData) { renderFormTable(); return; }
+  const empty = document.getElementById('formEmptyState');
+  const table = document.getElementById('formTable');
+  empty.style.display = 'block';
+  table.style.display = 'none';
+
+  fetch('/api/team-form').then(r => r.json()).then(d => {
+    if (d.error) {
+      empty.innerHTML = `<p style="color:var(--red)">${d.error}</p>`;
+      return;
+    }
+    formData = d;
+    formMatchDetails = {};
+    d.teams.forEach(t => {
+      Object.values(t.results).forEach(arr => {
+        arr.forEach(r => { if (r.fixture_id) formMatchDetails[r.fixture_id] = r.match_detail; });
+      });
+    });
+    empty.style.display = 'none';
+    table.style.display = 'table';
+    renderFormTable();
+  }).catch(err => {
+    empty.innerHTML = `<p style="color:var(--red)">Error: ${err.message}</p>`;
+  });
+}
+
+function renderFormTable() {
+  if (!formData) return;
+  const gws = formData.gw_columns;
+  const thead = document.getElementById('formTableHead');
+  const tbody = document.getElementById('formTableBody');
+
+  // Sort teams
+  let teams = [...formData.teams];
+  if (formSortKey === 'name') {
+    teams.sort((a, b) => formSortAsc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name));
+  } else {
+    teams.sort((a, b) => formSortAsc ? a.form_points - b.form_points : b.form_points - a.form_points);
+  }
+
+  // Header
+  const arrow = k => `<span class="sort-arrow">${formSortKey === k ? (formSortAsc ? '▲' : '▼') : '▽'}</span>`;
+  const sorted = k => formSortKey === k ? ' sorted' : '';
+  thead.innerHTML = `<tr>
+    <th class="${sorted('name')}" onclick="sortFormTable('name')">Team ${arrow('name')}</th>
+    <th class="${sorted('form_points')}" onclick="sortFormTable('form_points')">Pts ${arrow('form_points')}</th>
+    ${gws.map(gw => `<th>GW${gw}</th>`).join('')}
+  </tr>`;
+
+  // Body
+  tbody.innerHTML = '';
+  teams.forEach(t => {
+    const tr = document.createElement('tr');
+    let cells = `<td>${t.short}</td><td>${t.form_points}</td>`;
+    gws.forEach(gw => {
+      const results = t.results[String(gw)] || [];
+      if (results.length === 0) {
+        cells += `<td><span class="bgw-marker">-</span></td>`;
+      } else {
+        const badges = results.map(r => {
+          const cls = r.result === 'W' ? 'win' : r.result === 'D' ? 'draw' : 'loss';
+          const loc = r.is_home ? 'H' : 'A';
+          return `<span class="result-badge ${cls}" onclick="openMatchModal(${r.fixture_id})" title="${loc}: ${r.score_for}-${r.score_against} vs ${r.opponent_short}">${r.score_for}-${r.score_against} <span class="opp">${r.opponent_short}</span></span>`;
+        }).join('');
+        cells += `<td>${results.length > 1 ? '<div class="dgw-cell">' + badges + '</div>' : badges}</td>`;
+      }
+    });
+    tr.innerHTML = cells;
+    tbody.appendChild(tr);
+  });
+}
+
+function sortFormTable(key) {
+  if (formSortKey === key) {
+    formSortAsc = !formSortAsc;
+  } else {
+    formSortKey = key;
+    formSortAsc = key === 'name';
+  }
+  renderFormTable();
+}
+
+function openMatchModal(fixtureId) {
+  const detail = formMatchDetails[fixtureId];
+  if (!detail) return;
+  document.getElementById('matchModalBody').innerHTML = renderMatchCardHtml(detail);
+  document.getElementById('matchModal').classList.add('visible');
+}
+
+function closeMatchModal() {
+  document.getElementById('matchModal').classList.remove('visible');
 }
 
 // ---------------------------------------------------------------------------
@@ -2123,6 +2293,14 @@ function switchTab(tab) {
     }
   } else {
     gwScoresPanel.classList.remove('visible');
+  }
+
+  const teamFormPanel = document.getElementById('teamFormPanel');
+  if (view === 'teamform') {
+    teamFormPanel.classList.add('visible');
+    loadTeamForm();
+  } else {
+    teamFormPanel.classList.remove('visible');
   }
 
   const seasonPanel = document.getElementById('seasonPanel');
@@ -4137,16 +4315,41 @@ function renderPriceAlerts(alerts) {
   document.getElementById('priceAlertsContainer').innerHTML = html;
 }
 
+let _priceTableData = [];
+let _priceTableSort = null; // 'in' or 'out'
+let _priceTableSortAsc = false;
+
 function renderPriceTable(prices) {
+  _priceTableData = prices;
+  _renderPriceTableSorted();
+}
+
+function _renderPriceTableSorted() {
+  const prices = _priceTableData;
   if (!prices.length) {
     document.getElementById('priceTableContainer').innerHTML =
       '<p style="color:var(--text2);font-size:13px">No price data yet. Click "Update Prices".</p>';
     return;
   }
+  const sorted = [...prices];
+  if (_priceTableSort === 'in') {
+    sorted.sort((a, b) => _priceTableSortAsc
+      ? (a.transfers_in_event || 0) - (b.transfers_in_event || 0)
+      : (b.transfers_in_event || 0) - (a.transfers_in_event || 0));
+  } else if (_priceTableSort === 'out') {
+    sorted.sort((a, b) => _priceTableSortAsc
+      ? (a.transfers_out_event || 0) - (b.transfers_out_event || 0)
+      : (b.transfers_out_event || 0) - (a.transfers_out_event || 0));
+  }
+  const inArrow = _priceTableSort === 'in' ? (_priceTableSortAsc ? ' \u25B2' : ' \u25BC') : '';
+  const outArrow = _priceTableSort === 'out' ? (_priceTableSortAsc ? ' \u25B2' : ' \u25BC') : '';
   let html = '<div class="bt-table-wrap"><table class="bt-table"><thead><tr>';
-  html += '<th>Player</th><th>Price</th><th>In</th><th>Out</th><th>Date</th>';
+  html += '<th>Player</th><th>Price</th>';
+  html += `<th style="cursor:pointer" onclick="sortPriceTable('in')">In<span class="sort-arrow">${inArrow}</span></th>`;
+  html += `<th style="cursor:pointer" onclick="sortPriceTable('out')">Out<span class="sort-arrow">${outArrow}</span></th>`;
+  html += '<th>Date</th>';
   html += '</tr></thead><tbody>';
-  prices.forEach(p => {
+  sorted.forEach(p => {
     html += `<tr>
       <td>${p.web_name || '-'}</td>
       <td>${p.price ? p.price.toFixed(1) + 'm' : '-'}</td>
@@ -4157,6 +4360,16 @@ function renderPriceTable(prices) {
   });
   html += '</tbody></table></div>';
   document.getElementById('priceTableContainer').innerHTML = html;
+}
+
+function sortPriceTable(col) {
+  if (_priceTableSort === col) {
+    _priceTableSortAsc = !_priceTableSortAsc;
+  } else {
+    _priceTableSort = col;
+    _priceTableSortAsc = false;
+  }
+  _renderPriceTableSorted();
 }
 
 function loadPricePredictions() {

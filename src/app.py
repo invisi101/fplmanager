@@ -1393,12 +1393,75 @@ def api_pl_table():
     return jsonify({"table": table})
 
 
+def _extract_stat(stats_list, stat_name, side):
+    """Extract stat entries for home ('h') or away ('a') side."""
+    for stat in stats_list:
+        if stat.get("identifier") == stat_name:
+            return stat.get(side, [])
+    return []
+
+
+def _build_match_detail(f, team_info, element_map):
+    """Build a match detail dict from a fixture object (shared by GW Scores and Team Form)."""
+    h_id = f["team_h"]
+    a_id = f["team_a"]
+    h_info = team_info.get(h_id, {})
+    a_info = team_info.get(a_id, {})
+    stats_list = f.get("stats", [])
+
+    match = {
+        "home_team": h_info.get("name", ""),
+        "home_short": h_info.get("short", ""),
+        "away_team": a_info.get("name", ""),
+        "away_short": a_info.get("short", ""),
+        "home_score": f.get("team_h_score"),
+        "away_score": f.get("team_a_score"),
+        "kickoff": f.get("kickoff_time"),
+        "finished": f.get("finished", False),
+        "started": f.get("started", False),
+    }
+
+    for stat_key, output_key in [
+        ("goals_scored", "goals"),
+        ("assists", "assists"),
+        ("yellow_cards", "yellow_cards"),
+        ("red_cards", "red_cards"),
+        ("bonus", "bonus"),
+    ]:
+        home_entries = _extract_stat(stats_list, stat_key, "h")
+        away_entries = _extract_stat(stats_list, stat_key, "a")
+
+        if stat_key == "bonus":
+            match[output_key] = {
+                "home": [{"player": element_map.get(e["element"], "?"), "points": e["value"]} for e in home_entries],
+                "away": [{"player": element_map.get(e["element"], "?"), "points": e["value"]} for e in away_entries],
+            }
+        elif stat_key in ("goals_scored",):
+            match[output_key] = {
+                "home": [{"player": element_map.get(e["element"], "?"), "count": e["value"]} for e in home_entries],
+                "away": [{"player": element_map.get(e["element"], "?"), "count": e["value"]} for e in away_entries],
+            }
+        else:
+            match[output_key] = {
+                "home": [{"player": element_map.get(e["element"], "?")} for e in home_entries],
+                "away": [{"player": element_map.get(e["element"], "?")} for e in away_entries],
+            }
+
+    og_home = _extract_stat(stats_list, "own_goals", "h")
+    og_away = _extract_stat(stats_list, "own_goals", "a")
+    match["own_goals"] = {
+        "home": [{"player": element_map.get(e["element"], "?")} for e in og_home],
+        "away": [{"player": element_map.get(e["element"], "?")} for e in og_away],
+    }
+
+    return match
+
+
 @app.route("/api/gw-scores")
 def api_gw_scores():
     """Match details for a specific gameweek."""
     gameweek = request.args.get("gameweek", type=int)
     if not gameweek:
-        # Default to latest finished GW
         next_gw = _get_next_gw()
         gameweek = (next_gw - 1) if next_gw and next_gw > 1 else 1
 
@@ -1416,71 +1479,88 @@ def api_gw_scores():
     gw_fixtures = [f for f in fixtures if f.get("event") == gameweek]
     gw_fixtures.sort(key=lambda f: f.get("kickoff_time") or "")
 
-    def _extract_stat(stats_list, stat_name, side):
-        """Extract stat entries for home ('h') or away ('a') side."""
-        for stat in stats_list:
-            if stat.get("identifier") == stat_name:
-                return stat.get(side, [])
-        return []
+    matches = [_build_match_detail(f, team_info, element_map) for f in gw_fixtures]
+    return jsonify({"matches": matches, "gameweek": gameweek})
 
-    matches = []
-    for f in gw_fixtures:
+
+@app.route("/api/team-form")
+def api_team_form():
+    """Last 10 GWs of results for all 20 teams."""
+    fixtures_path = CACHE_DIR / "fpl_api_fixtures.json"
+    bootstrap_path = CACHE_DIR / "fpl_api_bootstrap.json"
+    if not fixtures_path.exists() or not bootstrap_path.exists():
+        return jsonify({"error": "No cached data. Click 'Get Latest Data' first."}), 400
+
+    fixtures = json.loads(fixtures_path.read_text(encoding="utf-8"))
+    bootstrap = json.loads(bootstrap_path.read_text(encoding="utf-8"))
+
+    team_info = {t["id"]: {"name": t["name"], "short": t["short_name"]} for t in bootstrap.get("teams", [])}
+    element_map = {el["id"]: el.get("web_name", "Unknown") for el in bootstrap.get("elements", [])}
+
+    # Find last 10 distinct finished GW numbers
+    finished_gws = sorted({f["event"] for f in fixtures if f.get("finished") and f.get("event")})
+    last_10_gws = finished_gws[-10:] if len(finished_gws) >= 10 else finished_gws
+    gw_set = set(last_10_gws)
+
+    # Build per-team results
+    teams = {}
+    for t_id, t_info in team_info.items():
+        teams[t_id] = {
+            "team_id": t_id,
+            "name": t_info["name"],
+            "short": t_info["short"],
+            "form_points": 0,
+            "results": {str(gw): [] for gw in last_10_gws},
+        }
+
+    for f in fixtures:
+        gw = f.get("event")
+        if not gw or gw not in gw_set or not f.get("finished"):
+            continue
+
         h_id = f["team_h"]
         a_id = f["team_a"]
-        h_info = team_info.get(h_id, {})
-        a_info = team_info.get(a_id, {})
-        stats_list = f.get("stats", [])
+        h_score = f.get("team_h_score", 0) or 0
+        a_score = f.get("team_a_score", 0) or 0
+        match_detail = _build_match_detail(f, team_info, element_map)
 
-        match = {
-            "home_team": h_info.get("name", ""),
-            "home_short": h_info.get("short", ""),
-            "away_team": a_info.get("name", ""),
-            "away_short": a_info.get("short", ""),
-            "home_score": f.get("team_h_score"),
-            "away_score": f.get("team_a_score"),
-            "kickoff": f.get("kickoff_time"),
-            "finished": f.get("finished", False),
-            "started": f.get("started", False),
-        }
+        # Home team result
+        if h_score > a_score:
+            h_result, a_result = "W", "L"
+        elif h_score < a_score:
+            h_result, a_result = "L", "W"
+        else:
+            h_result, a_result = "D", "D"
 
-        # Extract match events from stats
-        for stat_key, output_key in [
-            ("goals_scored", "goals"),
-            ("assists", "assists"),
-            ("yellow_cards", "yellow_cards"),
-            ("red_cards", "red_cards"),
-            ("bonus", "bonus"),
-        ]:
-            home_entries = _extract_stat(stats_list, stat_key, "h")
-            away_entries = _extract_stat(stats_list, stat_key, "a")
+        gw_key = str(gw)
+        if h_id in teams:
+            teams[h_id]["results"][gw_key].append({
+                "fixture_id": f.get("id"),
+                "opponent_short": team_info.get(a_id, {}).get("short", "?"),
+                "is_home": True,
+                "score_for": h_score,
+                "score_against": a_score,
+                "result": h_result,
+                "match_detail": match_detail,
+            })
+            teams[h_id]["form_points"] += 3 if h_result == "W" else (1 if h_result == "D" else 0)
 
-            if stat_key == "bonus":
-                match[output_key] = {
-                    "home": [{"player": element_map.get(e["element"], "?"), "points": e["value"]} for e in home_entries],
-                    "away": [{"player": element_map.get(e["element"], "?"), "points": e["value"]} for e in away_entries],
-                }
-            elif stat_key in ("goals_scored",):
-                match[output_key] = {
-                    "home": [{"player": element_map.get(e["element"], "?"), "count": e["value"]} for e in home_entries],
-                    "away": [{"player": element_map.get(e["element"], "?"), "count": e["value"]} for e in away_entries],
-                }
-            else:
-                match[output_key] = {
-                    "home": [{"player": element_map.get(e["element"], "?")} for e in home_entries],
-                    "away": [{"player": element_map.get(e["element"], "?")} for e in away_entries],
-                }
+        if a_id in teams:
+            teams[a_id]["results"][gw_key].append({
+                "fixture_id": f.get("id"),
+                "opponent_short": team_info.get(h_id, {}).get("short", "?"),
+                "is_home": False,
+                "score_for": a_score,
+                "score_against": h_score,
+                "result": a_result,
+                "match_detail": match_detail,
+            })
+            teams[a_id]["form_points"] += 3 if a_result == "W" else (1 if a_result == "D" else 0)
 
-        # Own goals
-        og_home = _extract_stat(stats_list, "own_goals", "h")
-        og_away = _extract_stat(stats_list, "own_goals", "a")
-        match["own_goals"] = {
-            "home": [{"player": element_map.get(e["element"], "?")} for e in og_home],
-            "away": [{"player": element_map.get(e["element"], "?")} for e in og_away],
-        }
-
-        matches.append(match)
-
-    return jsonify({"matches": matches, "gameweek": gameweek})
+    return jsonify({
+        "gw_columns": last_10_gws,
+        "teams": sorted(teams.values(), key=lambda t: -t["form_points"]),
+    })
 
 
 # ---------------------------------------------------------------------------
