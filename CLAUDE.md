@@ -113,8 +113,8 @@ All features shifted by 1 GW to prevent leakage. DGW handling: multiple rows per
 - Soft calibration caps per position (GKP=7, DEF=8, MID=10, FWD=10)
 
 ### Ensemble
-- Production predictions use a **50/50 blend** of decomposed sub-models and mean regression (`ENSEMBLE_WEIGHT_DECOMPOSED = 0.5` in predict.py)
-- This balances the sub-models' interpretable components with the mean model's direct optimization
+- Production predictions use an **85/15 blend** of mean regression and decomposed sub-models (`ENSEMBLE_WEIGHT_DECOMPOSED = 0.15` in predict.py)
+- Mean model drives prediction accuracy; decomposed weight preserves ranking signal in the bench/rotation zone
 
 ### Multi-GW Predictions
 - 3-GW: Sum of three 1-GW predictions with correct opponent data per offset
